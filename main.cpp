@@ -6,6 +6,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <vector>
 #include <iostream>
 #include <stdexcept>
@@ -14,20 +15,21 @@
 constexpr uint32_t width = 960;
 constexpr uint32_t height = 540;
 
-const std::vector<char const*> validationLayers = {
-    "VK_LAYER_KHRONOS_validation"
-};
-
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
 #else
 constexpr bool enableValidationLayers = true;
 #endif
 
+const std::vector<char const*> validationLayers = {
+    "VK_LAYER_KHRONOS_validation"
+};
+
 class HelloTriangleApplication
 {
 public:
-    void run() {
+    void run() 
+    {
         initWindow();
         initVulkan();
         mainLoop();
@@ -37,10 +39,19 @@ public:
 private:
     GLFWwindow* window = nullptr;
 
-    vk::raii::Context context;
-    vk::raii::Instance instance = nullptr;
+    std::vector<const char*> requiredDeviceExtension = {
+        vk::KHRSwapchainExtensionName
+    };
 
     vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+
+    vk::raii::Context           context;
+    vk::raii::Instance          instance        = nullptr;
+    vk::raii::PhysicalDevice    physicalDevice  = nullptr;
+    vk::raii::Device            device          = nullptr;
+    vk::raii::Queue             graphicsQueue   = nullptr;
+
+    /* APPLICATION LIFETIME METHODS */
 
     void initWindow()
     {
@@ -50,6 +61,61 @@ private:
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
         window = glfwCreateWindow(width, height, "Learn Vulkan", nullptr, nullptr);
+    }
+
+    void initVulkan()
+    {
+        createInstance();
+        setupDebugMessenger();
+        pickPhysicalDevice();
+        createLogicalDevice();
+    }
+
+    void mainLoop()
+    {
+        while (!glfwWindowShouldClose(window)) {
+            // std::cout << "hello, vulkan!" << std::endl;
+            glfwPollEvents();
+        }
+    }
+
+    void cleanup()
+    {
+        glfwDestroyWindow(window);
+
+        glfwTerminate();
+    }
+
+    /* SETUP METHODS */
+
+    // VKAPI_ATTR, VKAPI_CALL gives the function a signature that vulkan can call
+    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, 
+                                                          vk::DebugUtilsMessageTypeFlagsEXT type, 
+                                                          const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, 
+                                                          void *pUserData)
+    {
+        std::cerr << "(Validation layer): severity - " << to_string(severity) << "type - " << to_string(type) << " | msg: " << pCallbackData->pMessage << std::endl;
+
+        return vk::False;
+    }
+
+    void setupDebugMessenger()
+    {
+        if (!enableValidationLayers) return;
+
+        vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | 
+                                                            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
+        vk::DebugUtilsMessageTypeFlagsEXT messageTypeFlags(vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                                                           vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+                                                           vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
+        vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT
+        {
+            .messageSeverity = severityFlags,
+            .messageType = messageTypeFlags,
+            .pfnUserCallback = &debugCallback
+        };
+
+        debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
     }
 
     std::vector<const char*> getRequiredInstanceExtensions() 
@@ -138,54 +204,101 @@ private:
         instance = vk::raii::Instance(context, createInfo);
     }
 
-    // VKAPI_ATTR, VKAPI_CALL gives the function a signature that vulkan can call
-    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, 
-                                                          vk::DebugUtilsMessageTypeFlagsEXT type, 
-                                                          const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, 
-                                                          void *pUserData)
+    bool isDeviceSuitable(const vk::raii::PhysicalDevice &physicalDevice)
     {
-        std::cerr << "(Validation layer): severity - " << to_string(severity) << "type - " << to_string(type) << " | msg: " << pCallbackData->pMessage << std::endl;
+        // if supports vulkan 1.3
+        bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= vk::ApiVersion13;
 
-        return vk::False;
+        // if supports graphics queue family
+        auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+        bool supportsGraphics = std::ranges::any_of(queueFamilies, 
+            [](const auto& queueFamilyProp)
+            {
+                return static_cast<bool>(queueFamilyProp.queueFlags & vk::QueueFlagBits::eGraphics);
+            });
+
+        // if supports specific extensions
+        auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
+
+        // if any of the required device extensions aren't available -> false
+        bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension,
+            [&availableDeviceExtensions](const auto& requiredDeviceExtension)
+            {
+                return std::ranges::any_of(availableDeviceExtensions,
+                    [requiredDeviceExtension](const auto& availableDeviceExtension)
+                    {
+                        return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0;
+                    });
+            });
+
+        // if supports specific features
+        auto features = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+        bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
+                                        features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+
+        return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
     }
 
-    void setupDebugMessenger()
+    void pickPhysicalDevice()
     {
-        if (!enableValidationLayers) return;
+        // CHECKING IF DEVICES MEET REQUIREMENTS
+        auto physicalDevices = instance.enumeratePhysicalDevices();
 
-        vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | 
-                                                            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
-        vk::DebugUtilsMessageTypeFlagsEXT messageTypeFlags(vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                                                           vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-                                                           vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
-        vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT
+        // find if a GPU meets all the requirements
+        const auto deviceIterator = std::ranges::find_if(physicalDevices,
+            [&](const auto &physDevice)
+            {
+                return isDeviceSuitable(physDevice);
+            });
+
+        if(deviceIterator == physicalDevices.end())
         {
-            .messageSeverity = severityFlags,
-            .messageType = messageTypeFlags,
-            .pfnUserCallback = &debugCallback
+            throw std::runtime_error("Failed to find a GPU with support for all requirements");
+        }
+        
+        physicalDevice = *deviceIterator;
+    }
+
+    void createLogicalDevice()
+    {
+        std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
+
+        auto graphicsQueueFamilyProperty = std::ranges::find_if(queueFamilyProperties,
+            [](const auto& queueFamilyProp)
+            {
+                return (queueFamilyProp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0);
+            });
+
+        auto graphicsIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
+
+        float queuePriority = 0.5f; // priority for scheduling of command buffer execution, needed even if there is one queue
+        vk::DeviceQueueCreateInfo deviceQueueCreateInfo
+        {
+            .queueFamilyIndex = graphicsIndex,
+            .queueCount = 1,
+            .pQueuePriorities = &queuePriority
         };
 
-        debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
-    }
+        
+        // enabling features
+        // structure chain connects each feature struct with pointers, making moving through them easyty
+        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
+            {},                               // physical device features 2 - empty
+            {.dynamicRendering = true},       // vulkan 1.3 features - enable dynamic rendering
+            {.extendedDynamicState = true}    // extended dynamic state - enable extension
+        };
 
-    void initVulkan()
-    {
-        createInstance();
-    }
+        vk::DeviceCreateInfo deviceCreateInfo
+        {
+            .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(), // connecting the chain of features to vulkan
+            .queueCreateInfoCount = 1,
+            .pQueueCreateInfos = &deviceQueueCreateInfo,
+            .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
+            .ppEnabledExtensionNames = requiredDeviceExtension.data()
+        };
 
-    void mainLoop()
-    {
-        while (!glfwWindowShouldClose(window)) {
-            // std::cout << "hello, vulkan!" << std::endl;
-            glfwPollEvents();
-        }
-    }
-
-    void cleanup()
-    {
-        glfwDestroyWindow(window);
-
-        glfwTerminate();
+        device = vk::raii::Device(physicalDevice, deviceCreateInfo);
+        graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
     }
 };
 
