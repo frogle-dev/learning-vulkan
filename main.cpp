@@ -1,7 +1,6 @@
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include "vulkan/vulkan.hpp"
 #include <vulkan/vulkan_raii.hpp>
-#include <SDL3/SDL.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -45,11 +44,13 @@ private:
 
     vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
 
-    vk::raii::Context           context;
-    vk::raii::Instance          instance        = nullptr;
-    vk::raii::PhysicalDevice    physicalDevice  = nullptr;
-    vk::raii::Device            device          = nullptr;
-    vk::raii::Queue             graphicsQueue   = nullptr;
+    vk::raii::Context        context;
+    vk::raii::Instance       instance        = nullptr;
+    vk::raii::PhysicalDevice physicalDevice  = nullptr;
+    vk::raii::Device         logicalDevice   = nullptr;
+    vk::raii::Queue          queue           = nullptr;
+
+    vk::raii::SurfaceKHR     windowSurface   = nullptr; // window surface to render to window
 
     /* APPLICATION LIFETIME METHODS */
 
@@ -67,6 +68,7 @@ private:
     {
         createInstance();
         setupDebugMessenger();
+        createWindowSurface();
         pickPhysicalDevice();
         createLogicalDevice();
     }
@@ -204,6 +206,18 @@ private:
         instance = vk::raii::Instance(context, createInfo);
     }
 
+    void createWindowSurface()
+    {
+        VkSurfaceKHR c_api_Surface; // glfw only handles vulkan's C api, so a vulkan C surface is needed
+
+        if (glfwCreateWindowSurface(*instance, window, nullptr, &c_api_Surface) != 0)
+        {
+            throw std::runtime_error("Failed to create window surface");
+        }
+
+        windowSurface = vk::raii::SurfaceKHR(instance, c_api_Surface);
+    }
+
     bool isDeviceSuitable(const vk::raii::PhysicalDevice &physicalDevice)
     {
         // if supports vulkan 1.3
@@ -241,7 +255,8 @@ private:
 
     void pickPhysicalDevice()
     {
-        // CHECKING IF DEVICES MEET REQUIREMENTS
+        // checking if physical devices meet requirements
+
         auto physicalDevices = instance.enumeratePhysicalDevices();
 
         // find if a GPU meets all the requirements
@@ -263,29 +278,36 @@ private:
     {
         std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
 
-        auto graphicsQueueFamilyProperty = std::ranges::find_if(queueFamilyProperties,
-            [](const auto& queueFamilyProp)
-            {
-                return (queueFamilyProp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0);
-            });
-
-        auto graphicsIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
-
-        float queuePriority = 0.5f; // priority for scheduling of command buffer execution, needed even if there is one queue
-        vk::DeviceQueueCreateInfo deviceQueueCreateInfo
+        // check for support of both 'graphics' and 'present' queue families
+        std::optional<uint32_t> queueIndex;
+        for (uint32_t queueFamilyPropIdx = 0; queueFamilyPropIdx < queueFamilyProperties.size(); queueFamilyPropIdx++)
         {
-            .queueFamilyIndex = graphicsIndex,
-            .queueCount = 1,
-            .pQueuePriorities = &queuePriority
-        };
+            if ((queueFamilyProperties[queueFamilyPropIdx].queueFlags & vk::QueueFlagBits::eGraphics) && physicalDevice.getSurfaceSupportKHR(queueFamilyPropIdx, *windowSurface))
+            {
+                queueIndex = queueFamilyPropIdx;
+                break;
+            }
+        }
 
-        
-        // enabling features
+        if (!queueIndex.has_value())
+        {
+            throw std::runtime_error("Graphics and Present queue families not found");
+        }
+
+        // getting features
         // structure chain connects each feature struct with pointers, making moving through them easyty
         vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
             {},                               // physical device features 2 - empty
             {.dynamicRendering = true},       // vulkan 1.3 features - enable dynamic rendering
             {.extendedDynamicState = true}    // extended dynamic state - enable extension
+        };
+
+        float queuePriority = 0.5f; // priority for scheduling of command buffer execution, needed even if there is one queue
+        vk::DeviceQueueCreateInfo deviceQueueCreateInfo
+        {
+            .queueFamilyIndex = queueIndex.value(),
+            .queueCount = 1,
+            .pQueuePriorities = &queuePriority
         };
 
         vk::DeviceCreateInfo deviceCreateInfo
@@ -297,8 +319,8 @@ private:
             .ppEnabledExtensionNames = requiredDeviceExtension.data()
         };
 
-        device = vk::raii::Device(physicalDevice, deviceCreateInfo);
-        graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
+        logicalDevice = vk::raii::Device(physicalDevice, deviceCreateInfo);
+        queue = vk::raii::Queue(logicalDevice, queueIndex.value(), 0);
     }
 };
 
