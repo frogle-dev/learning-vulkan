@@ -5,6 +5,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <assert.h>
 #include <algorithm>
 #include <vector>
 #include <iostream>
@@ -38,21 +39,25 @@ public:
 private:
     GLFWwindow* window = nullptr;
 
+    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+
     std::vector<const char*> requiredDeviceExtensions = {
         vk::KHRSwapchainExtensionName
     };
-
-    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
 
     vk::raii::Context        context;
     vk::raii::Instance       instance        = nullptr;
     vk::raii::PhysicalDevice physicalDevice  = nullptr;
     vk::raii::Device         logicalDevice   = nullptr;
     vk::raii::Queue          queue           = nullptr;
-    vk::raii::SwapchainKHR   swapchain       = nullptr;
-    std::vector<vk::Image>   swapchainImages;
 
-    vk::raii::SurfaceKHR     windowSurface   = nullptr; // window surface to render to window
+    vk::raii::SurfaceKHR     windowSurface   = nullptr;  // surface to render to window
+
+    vk::raii::SwapchainKHR           swapchain       = nullptr;
+    std::vector<vk::Image>           swapchainImages;
+    vk::SurfaceFormatKHR             swapchainSurfaceFormat;
+    vk::Extent2D                     swapchainExtent;
+    std::vector<vk::raii::ImageView> swapchainImageViews;
 
     /* APPLICATION LIFETIME METHODS */
 
@@ -74,6 +79,7 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapchain();
+        createImageViews();
     }
 
     void mainLoop()
@@ -328,10 +334,7 @@ private:
 
     vk::SurfaceFormatKHR chooseSwapchainSurfaceFormat(const std::vector<vk::SurfaceFormatKHR> &availableFormats)
     {
-        if (availableFormats.empty())
-        {
-            throw std::runtime_error("No swapchain surface formats");
-        }
+        assert(!availableFormats.empty());
 
         const auto formatIterator = std::ranges::find_if(availableFormats,
             [](const auto &format)
@@ -347,15 +350,11 @@ private:
         // fifo present mode - stores rendered images in a queue, takes an image from the front of the queue to display every time the display refreshes
         // mailbox present mode - like fifo, but when the queue is full it replaces old images with new ones to display images as fast as possible
 
-        // if fifo present mode is not available
-        if(! std::ranges::any_of(availablePresentModes,
+        assert(std::ranges::any_of(availablePresentModes,
             [](auto presentMode)
             {
                 return presentMode == vk::PresentModeKHR::eFifo;
-            }))
-        {
-            throw std::runtime_error("FIFO present mode not available");
-        }
+            }));
 
         // if mailbox present mode is available, use it, otherwise FIFO present mode
         return std::ranges::any_of(availablePresentModes,
@@ -428,6 +427,24 @@ private:
 
         swapchain = vk::raii::SwapchainKHR(logicalDevice, swapchainCreateInfo);
         swapchainImages = swapchain.getImages();
+    }
+
+    void createImageViews()
+    {
+        assert(swapchainImageViews.empty());
+
+        vk::ImageViewCreateInfo imageViewCreateInfo
+        {
+            .viewType = vk::ImageViewType::e2D,
+            .format = swapchainSurfaceFormat.format,
+            .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1 }
+        };
+
+        for (vk::Image &image : swapchainImages)
+        {
+            imageViewCreateInfo.image = image;
+            swapchainImageViews.emplace_back(vk::raii::ImageView(logicalDevice, imageViewCreateInfo));
+        }
     }
 };
 
