@@ -38,7 +38,7 @@ public:
 private:
     GLFWwindow* window = nullptr;
 
-    std::vector<const char*> requiredDeviceExtension = {
+    std::vector<const char*> requiredDeviceExtensions = {
         vk::KHRSwapchainExtensionName
     };
 
@@ -49,6 +49,8 @@ private:
     vk::raii::PhysicalDevice physicalDevice  = nullptr;
     vk::raii::Device         logicalDevice   = nullptr;
     vk::raii::Queue          queue           = nullptr;
+    vk::raii::SwapchainKHR   swapchain       = nullptr;
+    std::vector<vk::Image>   swapchainImages;
 
     vk::raii::SurfaceKHR     windowSurface   = nullptr; // window surface to render to window
 
@@ -71,6 +73,7 @@ private:
         createWindowSurface();
         pickPhysicalDevice();
         createLogicalDevice();
+        createSwapchain();
     }
 
     void mainLoop()
@@ -113,7 +116,7 @@ private:
         vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT
         {
             .messageSeverity = severityFlags,
-            .messageType = messageTypeFlags,
+            .messageType     = messageTypeFlags,
             .pfnUserCallback = &debugCallback
         };
 
@@ -140,11 +143,11 @@ private:
         // instance is used to communicate with vulkan
         constexpr vk::ApplicationInfo appInfo
         {
-            .pApplicationName = "Learn Vulkan",
+            .pApplicationName   = "Learn Vulkan",
             .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-            .pEngineName = "No Engine",
-            .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-            .apiVersion = vk::ApiVersion14
+            .pEngineName        = "No Engine",
+            .engineVersion      = VK_MAKE_VERSION(1, 0, 0),
+            .apiVersion         = vk::ApiVersion14
         };
 
 
@@ -196,10 +199,10 @@ private:
         // CREATING THE INSTANCE
         vk::InstanceCreateInfo createInfo
         {
-            .pApplicationInfo = &appInfo,
-            .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
-            .ppEnabledLayerNames = requiredLayers.data(),
-            .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
+            .pApplicationInfo        = &appInfo,
+            .enabledLayerCount       = static_cast<uint32_t>(requiredLayers.size()),
+            .ppEnabledLayerNames     = requiredLayers.data(),
+            .enabledExtensionCount   = static_cast<uint32_t>(requiredExtensions.size()),
             .ppEnabledExtensionNames = requiredExtensions.data()
         };
 
@@ -235,7 +238,7 @@ private:
         auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
 
         // if any of the required device extensions aren't available -> false
-        bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension,
+        bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtensions,
             [&availableDeviceExtensions](const auto& requiredDeviceExtension)
             {
                 return std::ranges::any_of(availableDeviceExtensions,
@@ -270,7 +273,7 @@ private:
         {
             throw std::runtime_error("Failed to find a GPU with support for all requirements");
         }
-        
+
         physicalDevice = *deviceIterator;
     }
 
@@ -306,21 +309,125 @@ private:
         vk::DeviceQueueCreateInfo deviceQueueCreateInfo
         {
             .queueFamilyIndex = queueIndex.value(),
-            .queueCount = 1,
+            .queueCount       = 1,
             .pQueuePriorities = &queuePriority
         };
 
         vk::DeviceCreateInfo deviceCreateInfo
         {
-            .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(), // connecting the chain of features to vulkan
-            .queueCreateInfoCount = 1,
-            .pQueueCreateInfos = &deviceQueueCreateInfo,
-            .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
-            .ppEnabledExtensionNames = requiredDeviceExtension.data()
+            .pNext                   = &featureChain.get<vk::PhysicalDeviceFeatures2>(), // connecting the chain of features to vulkan
+            .queueCreateInfoCount    = 1,
+            .pQueueCreateInfos       = &deviceQueueCreateInfo,
+            .enabledExtensionCount   = static_cast<uint32_t>(requiredDeviceExtensions.size()),
+            .ppEnabledExtensionNames = requiredDeviceExtensions.data()
         };
 
         logicalDevice = vk::raii::Device(physicalDevice, deviceCreateInfo);
         queue = vk::raii::Queue(logicalDevice, queueIndex.value(), 0);
+    }
+
+    vk::SurfaceFormatKHR chooseSwapchainSurfaceFormat(const std::vector<vk::SurfaceFormatKHR> &availableFormats)
+    {
+        if (availableFormats.empty())
+        {
+            throw std::runtime_error("No swapchain surface formats");
+        }
+
+        const auto formatIterator = std::ranges::find_if(availableFormats,
+            [](const auto &format)
+            {
+                return format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+            });
+
+        return formatIterator != availableFormats.end() ? *formatIterator : availableFormats[0];
+    }
+
+    vk::PresentModeKHR chooseSwapchainPresentMode(const std::vector<vk::PresentModeKHR> &availablePresentModes)
+    {
+        // fifo present mode - stores rendered images in a queue, takes an image from the front of the queue to display every time the display refreshes
+        // mailbox present mode - like fifo, but when the queue is full it replaces old images with new ones to display images as fast as possible
+
+        // if fifo present mode is not available
+        if(! std::ranges::any_of(availablePresentModes,
+            [](auto presentMode)
+            {
+                return presentMode == vk::PresentModeKHR::eFifo;
+            }))
+        {
+            throw std::runtime_error("FIFO present mode not available");
+        }
+
+        // if mailbox present mode is available, use it, otherwise FIFO present mode
+        return std::ranges::any_of(availablePresentModes,
+            [](const vk::PresentModeKHR presentMode)
+            {
+                return vk::PresentModeKHR::eMailbox == presentMode;
+            }) 
+            ? vk::PresentModeKHR::eMailbox : vk::PresentModeKHR::eFifo;
+    }
+
+    vk::Extent2D chooseSwapchainExtent(const vk::SurfaceCapabilitiesKHR &surfaceCapabilities)
+    {
+        // extent is the resolution of the images in the swapchain
+
+        if (surfaceCapabilities.currentExtent.width != UINT32_MAX)
+        {
+            return surfaceCapabilities.currentExtent;
+        }
+
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+
+        return vk::Extent2D{
+            std::clamp<uint32_t>(width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width),
+            std::clamp<uint32_t>(height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height)
+        };
+    }
+
+    uint32_t chooseSwapchainMinImageCount(const vk::SurfaceCapabilitiesKHR &surfaceCapabilities)
+    {
+        uint32_t minImgCount = std::max(uint32_t(3), surfaceCapabilities.minImageCount);
+
+        if ((0 < surfaceCapabilities.maxImageCount) && (surfaceCapabilities.maxImageCount < minImgCount))
+        {
+            minImgCount = surfaceCapabilities.maxImageCount;
+        }
+
+        return minImgCount;
+    }
+
+    void createSwapchain() 
+    {
+        vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(*windowSurface);
+        vk::Extent2D extent = chooseSwapchainExtent(surfaceCapabilities);
+        uint32_t minImageCount = chooseSwapchainMinImageCount(surfaceCapabilities);
+
+        std::vector<vk::SurfaceFormatKHR> availableFormats = physicalDevice.getSurfaceFormatsKHR(windowSurface);
+        vk::SurfaceFormatKHR surfaceFormat = chooseSwapchainSurfaceFormat(availableFormats);
+
+        std::vector<vk::PresentModeKHR> availablePresentModes = physicalDevice.getSurfacePresentModesKHR(windowSurface);
+        vk::PresentModeKHR presentMode = chooseSwapchainPresentMode(availablePresentModes);
+
+        vk::SwapchainCreateInfoKHR swapchainCreateInfo
+        {
+            .surface          = *windowSurface,
+            .minImageCount    = minImageCount,
+            .imageFormat      = surfaceFormat.format,
+            .imageColorSpace  = surfaceFormat.colorSpace,
+            .imageExtent      = extent,
+            .imageArrayLayers = 1,
+            .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
+            .imageSharingMode = vk::SharingMode::eExclusive,
+            .preTransform     = surfaceCapabilities.currentTransform,
+            .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+            .presentMode      = presentMode,
+            .clipped          = true,
+
+            .oldSwapchain     = nullptr
+        };
+
+        swapchain = vk::raii::SwapchainKHR(logicalDevice, swapchainCreateInfo);
+        swapchainImages = swapchain.getImages();
     }
 };
 
