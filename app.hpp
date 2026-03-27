@@ -468,8 +468,8 @@ private:
 
         vk::ImageViewCreateInfo imageViewCreateInfo
         {
-            .viewType = vk::ImageViewType::e2D,
-            .format = swapchainSurfaceFormat.format,
+            .viewType         = vk::ImageViewType::e2D,
+            .format           = swapchainSurfaceFormat.format,
             .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1 }
         };
 
@@ -482,6 +482,78 @@ private:
 
     void createGraphicsPipeline()
     {
-        std::vector<char> shaderCode = readFile(appPath() + "/shaders/slang.spv");
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(appPath() + "/shaders/slang.spv"));
+
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo
+        {
+            .stage               = vk::ShaderStageFlagBits::eVertex,
+            .module              = shaderModule,
+            .pName               = "vertMain", // the entrypoint in the slang code
+            .pSpecializationInfo = nullptr     // used to set constants in shader per-pipeline
+        };
+
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo
+        {
+            .stage  = vk::ShaderStageFlagBits::eFragment,
+            .module = shaderModule,
+            .pName  = "fragMain"
+        };
+
+        vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly
+        {
+            .topology = vk::PrimitiveTopology::eTriangleList
+        };
+
+        vk::Viewport viewport
+        {
+            .x        = 0.0f,
+            .y        = 0.0f,
+            .width    = static_cast<float>(swapchainExtent.width),
+            .height   = static_cast<float>(swapchainExtent.height),
+            .minDepth = 0.0f,
+            .maxDepth = 1.0f
+        };
+
+        // scissor defines the region where pixels are stored
+        vk::Rect2D scissor
+        {
+            .offset = vk::Offset2D{0, 0},
+            .extent = swapchainExtent
+        };
+
+        vk::PipelineViewportStateCreateInfo viewportState
+        {
+            .viewportCount = 1,
+            .pViewports    = &viewport,
+            .scissorCount  = 1,
+            .pScissors     = &scissor
+        };
+
+        vk::PipelineRasterizationStateCreateInfo rasterizer
+        {
+            .depthClampEnable        = vk::False, // if true, fragments past the near or far plane will be clamped rather than discarded
+            .rasterizerDiscardEnable = vk::False, // if true, skips rasterizer stage
+            .polygonMode             = vk::PolygonMode::eFill,
+            .cullMode                = vk::CullModeFlagBits::eBack,
+            .frontFace               = vk::FrontFace::eClockwise,
+            .depthBiasEnable         = vk::False, // if true, rasterizer can make adjustments to depth values
+            .lineWidth               = 1.0f
+        };
+    }
+
+    [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char> &code) const
+    {
+        vk::ShaderModuleCreateInfo createInfo
+        {
+            .codeSize = code.size() * sizeof(char),
+            .pCode    = reinterpret_cast<const uint32_t*>(code.data())
+        };
+
+        vk::raii::ShaderModule shaderModule {logicalDevice, createInfo};
+        return shaderModule;
     }
 };
