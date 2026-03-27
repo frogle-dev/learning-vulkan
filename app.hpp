@@ -9,9 +9,11 @@
 
 #include <assert.h>
 #include <algorithm>
+#include <filesystem>
 #include <vector>
 #include <iostream>
 #include <stdexcept>
+#include <fstream>
 
 constexpr uint32_t width = 960;
 constexpr uint32_t height = 540;
@@ -25,6 +27,11 @@ constexpr bool enableValidationLayers = true;
 const std::vector<char const*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
+
+inline std::string path(const char* path) 
+{
+    return (std::filesystem::canonical("/proc/self/exe").parent_path() / path).string();
+}
 
 class Application
 {
@@ -100,6 +107,29 @@ private:
     }
 
     /* SETUP METHODS */
+
+    static std::vector<char> readFile(const std::string &fileName)
+    {
+        // std::ios::ate - reading starts at the end of file
+        // std::ios::binary - reads file as a binary
+        std::ifstream fin(fileName, std::ios::ate | std::ios::binary);
+
+        if (!fin.is_open())
+        {
+            throw std::runtime_error("Failed to open file");
+        }
+        
+        // get position at end of file to get file length
+        std::vector<char> buffer(fin.tellg());
+
+        // go to beginning of file
+        fin.seekg(0, std::ios::beg);
+        fin.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+
+        fin.close();
+
+        return buffer;
+    }
 
     // VKAPI_ATTR, VKAPI_CALL gives the function a signature that vulkan can call
     static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, 
@@ -451,6 +481,6 @@ private:
 
     void createGraphicsPipeline()
     {
-        
+        std::vector<char> shaderCode = readFile(path("shaders/slang.spv"));
     }
 };
