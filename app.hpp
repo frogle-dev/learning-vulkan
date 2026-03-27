@@ -28,9 +28,9 @@ const std::vector<char const*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
 
-inline std::string path(const char* path) 
+inline std::string appPath()
 {
-    return (std::filesystem::canonical("/proc/self/exe").parent_path() / path).string();
+    return (std::filesystem::canonical("/proc/self/exe").parent_path()).string();
 }
 
 class Application
@@ -190,19 +190,19 @@ private:
 
 
         // VALIDATION LAYERS
-        std::vector<char const*> requiredLayers;
+        std::vector<const char*> requiredLayers;
         if (enableValidationLayers) 
         {
             requiredLayers.assign(validationLayers.begin(), validationLayers.end());
         }
 
         // check if validation layers are available
-        auto layerProperties = context.enumerateInstanceLayerProperties();
+        std::vector<vk::LayerProperties> layerProperties = context.enumerateInstanceLayerProperties();
         auto unsupportedLayerIterator = std::ranges::find_if(requiredLayers, // returns iterator to first layer that is not supported
-            [&layerProperties](const auto& requiredLayer) 
+            [&layerProperties](const char*& requiredLayer) 
             {
                 return std::ranges::none_of(layerProperties, // check if any required layers are missing from the instance's supported layers
-                    [requiredLayer](const auto& layerProperty) 
+                    [requiredLayer](const vk::LayerProperties& layerProperty) 
                     { 
                         return strcmp(layerProperty.layerName, requiredLayer) == 0; 
                     });
@@ -216,14 +216,14 @@ private:
         }
 
         // EXTENSIONS
-        auto requiredExtensions = getRequiredInstanceExtensions();
+        std::vector<const char*> requiredExtensions = getRequiredInstanceExtensions();
 
-        auto extensionProperties = context.enumerateInstanceExtensionProperties();
+        std::vector<vk::ExtensionProperties> extensionProperties = context.enumerateInstanceExtensionProperties();
         auto unsupportedPropertyIterator = std::ranges::find_if(requiredExtensions,
-            [&extensionProperties](const auto& requiredExtension) 
+            [&extensionProperties](const char*& requiredExtension) 
             {
                 return std::ranges::none_of(extensionProperties,
-                    [requiredExtension](const auto& extensionProperty) 
+                    [requiredExtension](const vk::ExtensionProperties& extensionProperty) 
                     {
                         return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
                     });
@@ -265,22 +265,23 @@ private:
         bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= vk::ApiVersion13;
 
         // if supports graphics queue family
-        auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+        std::vector<vk::QueueFamilyProperties> queueFamilies = physicalDevice.getQueueFamilyProperties();
+
         bool supportsGraphics = std::ranges::any_of(queueFamilies, 
-            [](const auto& queueFamilyProp)
+            [](const vk::QueueFamilyProperties& queueFamilyProp)
             {
                 return static_cast<bool>(queueFamilyProp.queueFlags & vk::QueueFlagBits::eGraphics);
             });
 
         // if supports specific extensions
-        auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
+        std::vector<vk::ExtensionProperties> availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
 
         // if any of the required device extensions aren't available -> false
         bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtensions,
-            [&availableDeviceExtensions](const auto& requiredDeviceExtension)
+            [&availableDeviceExtensions](const char*& requiredDeviceExtension)
             {
                 return std::ranges::any_of(availableDeviceExtensions,
-                    [requiredDeviceExtension](const auto& availableDeviceExtension)
+                    [requiredDeviceExtension](const vk::ExtensionProperties& availableDeviceExtension)
                     {
                         return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0;
                     });
@@ -298,11 +299,11 @@ private:
     {
         // checking if physical devices meet requirements
 
-        auto physicalDevices = instance.enumeratePhysicalDevices();
+        std::vector<vk::raii::PhysicalDevice> physicalDevices = instance.enumeratePhysicalDevices();
 
         // find if a GPU meets all the requirements
         const auto deviceIterator = std::ranges::find_if(physicalDevices,
-            [&](const auto &physDevice)
+            [&](const vk::raii::PhysicalDevice &physDevice)
             {
                 return isDeviceSuitable(physDevice);
             });
@@ -369,7 +370,7 @@ private:
         assert(!availableFormats.empty());
 
         const auto formatIterator = std::ranges::find_if(availableFormats,
-            [](const auto &format)
+            [](const vk::SurfaceFormatKHR &format)
             {
                 return format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
             });
@@ -383,7 +384,7 @@ private:
         // mailbox present mode - like fifo, but when the queue is full it replaces old images with new ones to display images as fast as possible
 
         assert(std::ranges::any_of(availablePresentModes,
-            [](auto presentMode)
+            [](vk::PresentModeKHR presentMode)
             {
                 return presentMode == vk::PresentModeKHR::eFifo;
             }));
@@ -481,6 +482,6 @@ private:
 
     void createGraphicsPipeline()
     {
-        std::vector<char> shaderCode = readFile(path("shaders/slang.spv"));
+        std::vector<char> shaderCode = readFile(appPath() + "/shaders/slang.spv");
     }
 };
