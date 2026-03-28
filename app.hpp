@@ -28,9 +28,9 @@ const std::vector<char const*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
 
-inline std::string appPath()
+inline std::filesystem::path appPath()
 {
-    return (std::filesystem::canonical("/proc/self/exe").parent_path()).string();
+    return std::filesystem::canonical("/proc/self/exe").parent_path();
 }
 
 class Application
@@ -61,11 +61,13 @@ private:
 
     vk::raii::SurfaceKHR     windowSurface   = nullptr;  // surface to render to window
 
-    vk::raii::SwapchainKHR           swapchain       = nullptr;
+    vk::raii::SwapchainKHR           swapchain = nullptr;
     std::vector<vk::Image>           swapchainImages;
     vk::SurfaceFormatKHR             swapchainSurfaceFormat;
     vk::Extent2D                     swapchainExtent;
     std::vector<vk::raii::ImageView> swapchainImageViews;
+
+    vk::raii::PipelineLayout pipelineLayout = nullptr;
 
     /* APPLICATION LIFETIME METHODS */
 
@@ -482,7 +484,7 @@ private:
 
     void createGraphicsPipeline()
     {
-        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(appPath() + "/shaders/slang.spv"));
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(appPath() / "shaders/slang.spv"));
 
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo
         {
@@ -543,6 +545,41 @@ private:
             .depthBiasEnable         = vk::False, // if true, rasterizer can make adjustments to depth values
             .lineWidth               = 1.0f
         };
+
+        vk::PipelineMultisampleStateCreateInfo multisampling
+        {
+            .rasterizationSamples = vk::SampleCountFlagBits::e1,
+            .sampleShadingEnable  = vk::False
+        };
+
+        // linearly interpolated blending
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment
+        {
+            .blendEnable         = vk::True,
+            .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+            .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+            .colorBlendOp        = vk::BlendOp::eAdd,
+            .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+            .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+            .alphaBlendOp        = vk::BlendOp::eAdd,
+            .colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+        };
+
+        vk::PipelineColorBlendStateCreateInfo colorBlending
+        {
+            .logicOpEnable = vk::False,
+            .logicOp = vk::LogicOp::eCopy,
+            .attachmentCount = 1,
+            .pAttachments = &colorBlendAttachment
+        };
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo
+        {
+            .setLayoutCount = 0,
+            .pushConstantRangeCount = 0
+        };
+
+        pipelineLayout = vk::raii::PipelineLayout(logicalDevice, pipelineLayoutInfo);
     }
 
     [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char> &code) const
