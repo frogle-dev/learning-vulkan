@@ -11,9 +11,15 @@
 #include <algorithm>
 #include <filesystem>
 #include <vector>
+#include <array>
 #include <iostream>
 #include <stdexcept>
 #include <fstream>
+
+inline std::filesystem::path appPath()
+{
+    return std::filesystem::canonical("/proc/self/exe").parent_path().parent_path();
+}
 
 constexpr uint32_t width = 960;
 constexpr uint32_t height = 540;
@@ -24,14 +30,9 @@ constexpr bool enableValidationLayers = false;
 constexpr bool enableValidationLayers = true;
 #endif
 
-const std::vector<char const*> validationLayers = {
+constexpr std::array<char const*, 1> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
-
-inline std::filesystem::path appPath()
-{
-    return std::filesystem::canonical("/proc/self/exe").parent_path();
-}
 
 class Application
 {
@@ -47,19 +48,21 @@ public:
 private:
     GLFWwindow* window = nullptr;
 
-    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
 
-    std::vector<const char*> requiredDeviceExtensions = {
+    std::array<const char*, 1> requiredDeviceExtensions = {
         vk::KHRSwapchainExtensionName
     };
 
     vk::raii::Context        context;
-    vk::raii::Instance       instance        = nullptr;
-    vk::raii::PhysicalDevice physicalDevice  = nullptr;
-    vk::raii::Device         logicalDevice   = nullptr;
-    vk::raii::Queue          queue           = nullptr;
+    vk::raii::Instance       instance       = nullptr;
+    vk::raii::PhysicalDevice physicalDevice = nullptr;
+    vk::raii::Device         logicalDevice  = nullptr;
+    vk::raii::Queue          queue          = nullptr;
+    uint32_t                 i_queue        = UINT32_MAX;
 
-    vk::raii::SurfaceKHR     windowSurface   = nullptr;  // surface to render to window
+    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+
+    vk::raii::SurfaceKHR windowSurface = nullptr;  // surface to render to window
 
     vk::raii::SwapchainKHR           swapchain = nullptr;
     std::vector<vk::Image>           swapchainImages;
@@ -67,7 +70,10 @@ private:
     vk::Extent2D                     swapchainExtent;
     std::vector<vk::raii::ImageView> swapchainImageViews;
 
-    vk::raii::PipelineLayout pipelineLayout = nullptr;
+    vk::raii::PipelineLayout pipelineLayout   = nullptr;
+    vk::raii::Pipeline       graphicsPipeline = nullptr;
+
+    vk::raii::CommandPool commandPool = nullptr;
 
     /* APPLICATION LIFETIME METHODS */
 
@@ -90,7 +96,8 @@ private:
         createLogicalDevice();
         createSwapchain();
         createImageViews();
-		createGraphicsPipeline();
+        createGraphicsPipeline();
+        createCommandPool();
     }
 
     void mainLoop()
@@ -110,11 +117,11 @@ private:
 
     /* SETUP METHODS */
 
-    static std::vector<char> readFile(const std::string &fileName)
+    static std::vector<char> readFile(const std::string &path)
     {
         // std::ios::ate - reading starts at the end of file
         // std::ios::binary - reads file as a binary
-        std::ifstream fin(fileName, std::ios::ate | std::ios::binary);
+        std::ifstream fin(path, std::ios::ate | std::ios::binary);
 
         if (!fin.is_open())
         {
@@ -290,8 +297,9 @@ private:
             });
 
         // if supports specific features
-        auto features = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-        bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
+        auto features = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+        bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
+                                        features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                                         features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
         return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
@@ -339,11 +347,12 @@ private:
         }
 
         // getting features
-        // structure chain connects each feature struct with pointers, making moving through them easyty
-        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
-            {},                               // physical device features 2 - empty
-            {.dynamicRendering = true},       // vulkan 1.3 features - enable dynamic rendering
-            {.extendedDynamicState = true}    // extended dynamic state - enable extension
+        // structure chain connects each feature struct with pointers, making moving through them easy
+        vk::StructureChain featureChain = {
+            vk::PhysicalDeviceFeatures2 {},
+            vk::PhysicalDeviceVulkan11Features {.shaderDrawParameters = true},
+            vk::PhysicalDeviceVulkan13Features {.dynamicRendering = true},
+            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {.extendedDynamicState = true}
         };
 
         float queuePriority = 0.5f; // priority for scheduling of command buffer execution, needed even if there is one queue
@@ -484,6 +493,8 @@ private:
 
     void createGraphicsPipeline()
     {
+        /* SHADER STAGE SETUP */
+
         vk::raii::ShaderModule shaderModule = createShaderModule(readFile(appPath() / "shaders/slang.spv"));
 
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo
@@ -503,6 +514,8 @@ private:
 
         vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
+        /* INPUT STAGE SETUP */
+
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly
@@ -510,30 +523,20 @@ private:
             .topology = vk::PrimitiveTopology::eTriangleList
         };
 
-        vk::Viewport viewport
-        {
-            .x        = 0.0f,
-            .y        = 0.0f,
-            .width    = static_cast<float>(swapchainExtent.width),
-            .height   = static_cast<float>(swapchainExtent.height),
-            .minDepth = 0.0f,
-            .maxDepth = 1.0f
-        };
-
-        // scissor defines the region where pixels are stored
-        vk::Rect2D scissor
-        {
-            .offset = vk::Offset2D{0, 0},
-            .extent = swapchainExtent
-        };
-
         vk::PipelineViewportStateCreateInfo viewportState
         {
             .viewportCount = 1,
-            .pViewports    = &viewport,
             .scissorCount  = 1,
-            .pScissors     = &scissor
         };
+
+        std::array dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        vk::PipelineDynamicStateCreateInfo dynamicState
+        {
+            .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+            .pDynamicStates    = dynamicStates.data()
+        };
+
+        /* RASTERIZATION STAGE SETUP */
 
         vk::PipelineRasterizationStateCreateInfo rasterizer
         {
@@ -552,6 +555,8 @@ private:
             .sampleShadingEnable  = vk::False
         };
 
+        /* COLOR BLENDING STAGE SETUP */
+
         // linearly interpolated blending
         vk::PipelineColorBlendAttachmentState colorBlendAttachment
         {
@@ -567,19 +572,45 @@ private:
 
         vk::PipelineColorBlendStateCreateInfo colorBlending
         {
-            .logicOpEnable = vk::False,
-            .logicOp = vk::LogicOp::eCopy,
+            .logicOpEnable   = vk::False,
+            .logicOp         = vk::LogicOp::eCopy,
             .attachmentCount = 1,
-            .pAttachments = &colorBlendAttachment
+            .pAttachments    = &colorBlendAttachment
         };
+
+        /* PIPELINE SETUP */
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo
         {
-            .setLayoutCount = 0,
+            .setLayoutCount         = 0,
             .pushConstantRangeCount = 0
         };
-
         pipelineLayout = vk::raii::PipelineLayout(logicalDevice, pipelineLayoutInfo);
+
+        vk::StructureChain pipelineCreateInfoChain = {
+            vk::GraphicsPipelineCreateInfo
+            {
+                .stageCount          = 2,
+                .pStages             = shaderStages,
+                .pVertexInputState   = &vertexInputInfo,
+                .pInputAssemblyState = &inputAssembly,
+                .pViewportState      = &viewportState,
+                .pRasterizationState = &rasterizer,
+                .pMultisampleState   = &multisampling,
+                .pColorBlendState    = &colorBlending,
+                .pDynamicState       = &dynamicState,
+                .layout              = pipelineLayout,
+                .renderPass          = nullptr // using dynamic rendering
+            },
+
+            vk::PipelineRenderingCreateInfo
+            {
+                .colorAttachmentCount    = 1,
+                .pColorAttachmentFormats = &swapchainSurfaceFormat.format
+            }
+        };
+
+        graphicsPipeline = vk::raii::Pipeline(logicalDevice, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
     }
 
     [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char> &code) const
@@ -592,5 +623,14 @@ private:
 
         vk::raii::ShaderModule shaderModule {logicalDevice, createInfo};
         return shaderModule;
+    }
+
+    void createCommandPool()
+    {
+        vk::CommandPoolCreateInfo poolInfo
+        {
+            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            .queueFamilyIndex = i_queue
+        };
     }
 };
