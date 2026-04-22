@@ -651,16 +651,16 @@ private:
             uint32_t imageIdx,
             vk::ImageLayout oldLayout,
             vk::ImageLayout newLayout,
-            vk::AccessFlags2 sourceAccessMask,
-            vk::AccessFlags2 destinationAccessMask,
-            vk::PipelineStageFlags2 sourceStageMask,
-            vk::PipelineStageFlags2 destinationStageMask)
+            vk::AccessFlags2 oldAccessMask,
+            vk::AccessFlags2 newAccessMask,
+            vk::PipelineStageFlags2 oldStageMask,
+            vk::PipelineStageFlags2 newStageMask)
     {
         vk::ImageMemoryBarrier2 barrier = {
-            .srcStageMask        = sourceStageMask,
-            .srcAccessMask       = sourceAccessMask,
-            .dstStageMask        = destinationStageMask,
-            .dstAccessMask       = destinationAccessMask,
+            .srcStageMask        = oldStageMask,
+            .srcAccessMask       = oldAccessMask,
+            .dstStageMask        = newStageMask,
+            .dstAccessMask       = newAccessMask,
             .oldLayout           = oldLayout,
             .newLayout           = newLayout,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -688,6 +688,7 @@ private:
     {
         commandBuffer.begin(vk::CommandBufferBeginInfo{});
 
+        // changing image layout from undefined to color attachment optimal
         transitionImageLayout(
             imageIdx,
             vk::ImageLayout::eUndefined,
@@ -699,12 +700,47 @@ private:
         );
 
         vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0);
-        vk::RenderingAttachmentInfo attachmentInfo = {
-            .imageView   = swapchainImageViews[imageIdx],
+        vk::RenderingAttachmentInfo attachmentInfo = 
+        {
+            .imageView   = swapchainImageViews[imageIdx], // rendering to this image in the swapchain
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .loadOp      = vk::AttachmentLoadOp::eClear,
             .storeOp     = vk::AttachmentStoreOp::eStore,
             .clearValue  = clearColor
         };
+
+        vk::RenderingInfo renderingInfo = 
+        {
+            .renderArea = {
+                .offset = {0, 0},
+                .extent = swapchainExtent
+            },
+            .layerCount           = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments    = &attachmentInfo,
+        };
+
+        commandBuffer.beginRendering(renderingInfo);
+
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+
+        commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width), static_cast<float>(swapchainExtent.height), 0.0f, 1.0f));
+        commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapchainExtent));
+
+        commandBuffer.draw(3, 1, 0, 0);
+
+        commandBuffer.endRendering();
+
+        transitionImageLayout(
+            imageIdx,
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::ImageLayout::ePresentSrcKHR,
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            {},
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits2::eBottomOfPipe
+        );
+
+        commandBuffer.end();
     }
 };
