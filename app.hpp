@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vulkan/vulkan_core.h>
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include "vulkan/vulkan.hpp"
 #include <vulkan/vulkan_raii.hpp>
@@ -53,27 +54,28 @@ private:
         vk::KHRSwapchainExtensionName
     };
 
-    vk::raii::Context        context;
-    vk::raii::Instance       instance       = nullptr;
-    vk::raii::PhysicalDevice physicalDevice = nullptr;
-    vk::raii::Device         logicalDevice  = nullptr;
-    vk::raii::Queue          queue          = nullptr;
-    uint32_t                 i_queue        = UINT32_MAX;
+    vk::raii::Context                context;
+    vk::raii::Instance               instance       = nullptr;
+    vk::raii::PhysicalDevice         physicalDevice = nullptr;
+    vk::raii::Device                 logicalDevice  = nullptr;
+    vk::raii::Queue                  queue          = nullptr;
+    uint32_t                         i_queue        = UINT32_MAX;
 
     vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
 
-    vk::raii::SurfaceKHR windowSurface = nullptr;  // surface to render to window
+    vk::raii::SurfaceKHR             windowSurface  = nullptr;  // surface to render to window
 
-    vk::raii::SwapchainKHR           swapchain = nullptr;
+    vk::raii::SwapchainKHR           swapchain      = nullptr;
     std::vector<vk::Image>           swapchainImages;
     vk::SurfaceFormatKHR             swapchainSurfaceFormat;
     vk::Extent2D                     swapchainExtent;
     std::vector<vk::raii::ImageView> swapchainImageViews;
 
-    vk::raii::PipelineLayout pipelineLayout   = nullptr;
-    vk::raii::Pipeline       graphicsPipeline = nullptr;
+    vk::raii::PipelineLayout         pipelineLayout   = nullptr;
+    vk::raii::Pipeline               graphicsPipeline = nullptr;
 
-    vk::raii::CommandPool commandPool = nullptr;
+    vk::raii::CommandPool            commandPool      = nullptr;
+    vk::raii::CommandBuffer          commandBuffer    = nullptr;
 
     /* APPLICATION LIFETIME METHODS */
 
@@ -141,10 +143,11 @@ private:
     }
 
     // VKAPI_ATTR, VKAPI_CALL gives the function a signature that vulkan can call
-    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, 
-                                                          vk::DebugUtilsMessageTypeFlagsEXT type, 
-                                                          const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, 
-                                                          void *pUserData)
+    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+            vk::DebugUtilsMessageSeverityFlagBitsEXT severity, 
+            vk::DebugUtilsMessageTypeFlagsEXT type, 
+            const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, 
+            void *pUserData)
     {
         std::cerr << "[Validation layer]: " << to_string(severity) << " , " << "[Type]: " << to_string(type) << " , " << "[Message]:" << std::endl << std::endl << pCallbackData->pMessage << std::endl << "----------------" << std::endl;
 
@@ -631,6 +634,77 @@ private:
         {
             .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
             .queueFamilyIndex = i_queue
+        };
+        commandPool = vk::raii::CommandPool(logicalDevice, poolInfo);
+
+        vk::CommandBufferAllocateInfo allocInfo
+        {
+            .commandPool = commandPool,
+            .level = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1
+        };
+
+        commandBuffer = std::move(vk::raii::CommandBuffers(logicalDevice, allocInfo).front());
+    }
+
+    void transitionImageLayout(
+            uint32_t imageIdx,
+            vk::ImageLayout oldLayout,
+            vk::ImageLayout newLayout,
+            vk::AccessFlags2 sourceAccessMask,
+            vk::AccessFlags2 destinationAccessMask,
+            vk::PipelineStageFlags2 sourceStageMask,
+            vk::PipelineStageFlags2 destinationStageMask)
+    {
+        vk::ImageMemoryBarrier2 barrier = {
+            .srcStageMask        = sourceStageMask,
+            .srcAccessMask       = sourceAccessMask,
+            .dstStageMask        = destinationStageMask,
+            .dstAccessMask       = destinationAccessMask,
+            .oldLayout           = oldLayout,
+            .newLayout           = newLayout,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image               = swapchainImages[imageIdx],
+            .subresourceRange    = {
+                .aspectMask = vk::ImageAspectFlagBits::eColor,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            },
+        };
+
+        vk::DependencyInfo dependencyInfo = {
+            .dependencyFlags         = {},
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers    = &barrier
+        };
+
+        commandBuffer.pipelineBarrier2(dependencyInfo);
+    }
+
+    void recordCommandBuffer(uint32_t imageIdx)
+    {
+        commandBuffer.begin(vk::CommandBufferBeginInfo{});
+
+        transitionImageLayout(
+            imageIdx,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eColorAttachmentOptimal,
+            {},
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput
+        );
+
+        vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0);
+        vk::RenderingAttachmentInfo attachmentInfo = {
+            .imageView   = swapchainImageViews[imageIdx],
+            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .loadOp      = vk::AttachmentLoadOp::eClear,
+            .storeOp     = vk::AttachmentStoreOp::eStore,
+            .clearValue  = clearColor
         };
     }
 };
