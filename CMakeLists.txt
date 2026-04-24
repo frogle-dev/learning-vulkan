@@ -4,7 +4,7 @@ project(learn_vulkan)
 set(CMAKE_CXX_STANDARD 20)
 
 find_package(Vulkan REQUIRED)
-find_package(glfw3 REQUIRED)
+find_package(SDL3 REQUIRED)
 find_package(glm REQUIRED)
 
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
@@ -33,7 +33,7 @@ add_executable(${PROJECT_NAME} main.cpp)
 
 target_link_libraries(${PROJECT_NAME}
         Vulkan::Vulkan
-        glfw
+        SDL3::SDL3
         glm::glm
 )
 

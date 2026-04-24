@@ -1,12 +1,18 @@
 #pragma once
 
+#include <SDL3/SDL_events.h>
+#include <SDL3/SDL_init.h>
+#include <SDL3/SDL_oldnames.h>
+#include <SDL3/SDL_video.h>
 #include <vulkan/vulkan_core.h>
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include "vulkan/vulkan.hpp"
 #include <vulkan/vulkan_raii.hpp>
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+// #define GLFW_INCLUDE_VULKAN
+// #include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
 
 #include <assert.h>
 #include <algorithm>
@@ -49,7 +55,11 @@ public:
     }
 
 private:
-    GLFWwindow* window = nullptr;
+    // GLFWwindow* window = nullptr;
+    SDL_Window* window = nullptr;
+
+    SDL_Event event;
+    bool quit = false;
 
     std::array<const char*, 1> requiredDeviceExtensions = {
         vk::KHRSwapchainExtensionName
@@ -91,14 +101,17 @@ private:
 
     void initWindow()
     {
-        glfwInit();
+        // glfwInit();
+        SDL_Init(SDL_INIT_VIDEO);
 
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+        // glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        // glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-        window = glfwCreateWindow(width, height, "Learn Vulkan", nullptr, nullptr);
-        glfwSetWindowUserPointer(window, this);
-        glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
+        // window = glfwCreateWindow(width, height, "Learn Vulkan", nullptr, nullptr);
+        // glfwSetWindowUserPointer(window, this);
+        // glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
+
+        window = SDL_CreateWindow("Hello, Vulkan!", width, height, SDL_WINDOW_RESIZABLE);
     }
 
     void initVulkan()
@@ -118,9 +131,17 @@ private:
 
     void mainLoop()
     {
-        while (!glfwWindowShouldClose(window)) {
+        while (!quit) {
+            while (SDL_PollEvent(&event) == true)
+            {
+                if (event.type == SDL_EVENT_QUIT) quit = true;
+                if (event.type == SDL_EVENT_WINDOW_RESIZED)
+                {
+                    framebufferResized = true;
+                }
+            }
+
             // std::cout << "hello, vulkan! " << frameIdx << std::endl;
-            glfwPollEvents();
             drawFrame();
         }
 
@@ -213,9 +234,9 @@ private:
     {
         cleanupSwapchain();
 
-        glfwDestroyWindow(window);
+        SDL_DestroyWindow(window);
 
-        glfwTerminate();
+        SDL_Quit();
     }
 
     /* SETUP METHODS */
@@ -276,10 +297,10 @@ private:
 
     std::vector<const char*> getRequiredInstanceExtensions() 
     {
-        uint32_t glfwExtensionCount = 0;
-        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+        uint32_t sdlExtensionCount = 0;
+        const char *const * sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
 
-        std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+        std::vector extensions(sdlExtensions, sdlExtensions + sdlExtensionCount);
         if (enableValidationLayers)
         {
             extensions.push_back(vk::EXTDebugUtilsExtensionName);
@@ -362,9 +383,9 @@ private:
 
     void createWindowSurface()
     {
-        VkSurfaceKHR c_api_Surface; // glfw only handles vulkan's C api, so a vulkan C surface is needed
+        VkSurfaceKHR c_api_Surface; // sdl only handles vulkan's C api, so a vulkan C surface is needed
 
-        if (glfwCreateWindowSurface(*instance, window, nullptr, &c_api_Surface) != 0)
+        if (!SDL_Vulkan_CreateSurface(window, *instance, nullptr, &c_api_Surface))
         {
             throw std::runtime_error("Failed to create window surface");
         }
@@ -523,7 +544,8 @@ private:
         }
 
         int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
+        // glfwGetFramebufferSize(window, &width, &height);
+        SDL_GetWindowSizeInPixels(window, &width, &height);
 
         return vk::Extent2D{
             std::clamp<uint32_t>(width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width),
@@ -553,11 +575,14 @@ private:
     {
         int width = 0;
         int height = 0;
-        glfwGetFramebufferSize(window, &width, &height);
+        // glfwGetFramebufferSize(window, &width, &height);
+        SDL_GetWindowSizeInPixels(window, &width, &height);
         while (width == 0 || height == 0)
         {
-            glfwGetFramebufferSize(window, &width, &height);
-            glfwWaitEvents();
+            // glfwGetFramebufferSize(window, &width, &height);
+            SDL_GetWindowSizeInPixels(window, &width, &height);
+            // glfwWaitEvents();
+            SDL_WaitEvent(&event);
         }
 
         logicalDevice.waitIdle();
@@ -890,11 +915,5 @@ private:
             presentCompleteSphrs.emplace_back(logicalDevice, vk::SemaphoreCreateInfo{});
             drawFences.emplace_back(logicalDevice, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
         }
-    }
-
-    static void framebufferSizeCallback(GLFWwindow* window, int width, int height)
-    {
-        Application* app = reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
-        app->framebufferResized = true;
     }
 };
