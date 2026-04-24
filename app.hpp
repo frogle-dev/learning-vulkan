@@ -22,8 +22,10 @@ inline std::filesystem::path appPath()
     return std::filesystem::canonical("/proc/self/exe").parent_path().parent_path();
 }
 
-constexpr uint32_t width = 960;
-constexpr uint32_t height = 540;
+constexpr uint16_t width = 960;
+constexpr uint16_t height = 540;
+
+constexpr uint8_t maxFramesInFlight = 2;
 
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
@@ -56,9 +58,9 @@ private:
     vk::raii::Context                context;
     vk::raii::Instance               instance       = nullptr;
     vk::raii::PhysicalDevice         physicalDevice = nullptr; // Physical device represents the GPU
-    vk::raii::Device                 device         = nullptr; // Device is the interface for the physical device
+    vk::raii::Device                 logicalDevice  = nullptr; // Logical Device is the interface for the physical device
     vk::raii::Queue                  queue          = nullptr;
-    uint32_t                         i_queue        = UINT32_MAX;
+    uint32_t                         queueIdx       = UINT32_MAX;
 
     vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
 
@@ -74,12 +76,16 @@ private:
     vk::raii::Pipeline               graphicsPipeline = nullptr;
 
     vk::raii::CommandPool            commandPool      = nullptr;
-    vk::raii::CommandBuffer          commandBuffer    = nullptr;
+    std::vector
+        <vk::raii::CommandBuffer>    commandBuffers;
+
+    uint32_t                         frameIdx = 0;
+    bool                             framebufferResized = false;
 
     // Sync objects
-    vk::raii::Semaphore presentCompleteSphr = nullptr;
-    vk::raii::Semaphore renderFinishedSphr  = nullptr;
-    vk::raii::Fence     drawFence           = nullptr;
+    std::vector<vk::raii::Semaphore> presentCompleteSphrs;
+    std::vector<vk::raii::Semaphore> renderFinishedSphrs;
+    std::vector<vk::raii::Fence>     drawFences;
 
     /* APPLICATION METHODS */
 
@@ -88,9 +94,11 @@ private:
         glfwInit();
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
         window = glfwCreateWindow(width, height, "Learn Vulkan", nullptr, nullptr);
+        glfwSetWindowUserPointer(window, this);
+        glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
     }
 
     void initVulkan()
@@ -104,60 +112,107 @@ private:
         createImageViews();
         createGraphicsPipeline();
         createCommandPool();
-        createCommandBuffer();
+        createCommandBuffers();
         createSyncObjects();
     }
 
     void mainLoop()
     {
         while (!glfwWindowShouldClose(window)) {
-            std::cout << "hello, vulkan!" << std::endl;
+            // std::cout << "hello, vulkan! " << frameIdx << std::endl;
             glfwPollEvents();
             drawFrame();
         }
+
+        logicalDevice.waitIdle();
     }
 
     void drawFrame()
     {
-        vk::Result fenceResult = device.waitForFences(*drawFence, vk::True, UINT64_MAX);
+        vk::Result fenceResult = logicalDevice.waitForFences(*drawFences[frameIdx], vk::True, UINT64_MAX);
         if (fenceResult != vk::Result::eSuccess)
         {
             throw std::runtime_error("Failed to wait for fence");
         }
-        device.resetFences(*drawFence);
 
-        auto [result, imageIdx] = swapchain.acquireNextImage(UINT64_MAX, *presentCompleteSphr, nullptr);
+        uint32_t imageIdx;
+        try
+        {
+            auto [result, idx] = swapchain.acquireNextImage(UINT64_MAX, *presentCompleteSphrs[frameIdx], nullptr);
 
+            if (result == vk::Result::eErrorOutOfDateKHR)
+            {
+                recreateSwapchain();
+                return;
+            }
+            if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+            {
+                assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
+                throw std::runtime_error("Failed to acquire swap chain image");
+            }
+
+            imageIdx = idx;
+        }
+        catch (vk::OutOfDateKHRError)
+        {
+            recreateSwapchain();
+            return;
+        }
+
+        logicalDevice.resetFences(*drawFences[frameIdx]);
+
+        commandBuffers[frameIdx].reset();
         recordCommandBuffer(imageIdx);
 
         vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
         const vk::SubmitInfo submitInfo
         {
             .waitSemaphoreCount   = 1,
-            .pWaitSemaphores      = &*presentCompleteSphr, // semaphores to wait for
+            .pWaitSemaphores      = &*presentCompleteSphrs[frameIdx], // semaphores to wait for
             .pWaitDstStageMask    = &waitDestinationStageMask,
             .commandBufferCount   = 1,
-            .pCommandBuffers      = &*commandBuffer,
+            .pCommandBuffers      = &*commandBuffers[frameIdx],
             .signalSemaphoreCount = 1,
-            .pSignalSemaphores    = &*renderFinishedSphr, // semaphores to signal when done
+            .pSignalSemaphores    = &*renderFinishedSphrs[imageIdx], // semaphores to signal when done
         };
 
-        queue.submit(submitInfo, *drawFence);
+        queue.submit(submitInfo, *drawFences[frameIdx]);
 
         const vk::PresentInfoKHR presentInfoKHR
         {
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores    = &*renderFinishedSphr,
+            .pWaitSemaphores    = &*renderFinishedSphrs[imageIdx],
             .swapchainCount     = 1,
             .pSwapchains        = &*swapchain,
             .pImageIndices      = &imageIdx,
         };
 
-        result = queue.presentKHR(presentInfoKHR);
+        try
+        {
+            vk::Result result = queue.presentKHR(presentInfoKHR);
+            if (result == vk::Result::eSuboptimalKHR || result == vk::Result::eErrorOutOfDateKHR || framebufferResized)
+            {
+                framebufferResized = false;
+                recreateSwapchain();
+            }
+            else
+            {
+                assert(result == vk::Result::eSuccess);
+            }
+        }
+        catch (vk::OutOfDateKHRError&)
+        {
+            framebufferResized = false;
+            recreateSwapchain();
+        }
+
+        frameIdx = (frameIdx + 1) % maxFramesInFlight;
     }
 
     void cleanup()
     {
+        cleanupSwapchain();
+
         glfwDestroyWindow(window);
 
         glfwTerminate();
@@ -175,7 +230,7 @@ private:
         {
             throw std::runtime_error("Failed to open file");
         }
-        
+
         // get position at end of file to get file length
         std::vector<char> buffer(fin.tellg());
 
@@ -348,6 +403,7 @@ private:
         // if supports specific features
         auto features = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
         bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
+                                        features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
                                         features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                                         features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
@@ -380,17 +436,16 @@ private:
         std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
 
         // check for support of both 'graphics' and 'present' queue families
-        std::optional<uint32_t> queueIndex;
         for (uint32_t queueFamilyPropIdx = 0; queueFamilyPropIdx < queueFamilyProperties.size(); queueFamilyPropIdx++)
         {
             if ((queueFamilyProperties[queueFamilyPropIdx].queueFlags & vk::QueueFlagBits::eGraphics) && physicalDevice.getSurfaceSupportKHR(queueFamilyPropIdx, *windowSurface))
             {
-                queueIndex = queueFamilyPropIdx;
+                queueIdx = queueFamilyPropIdx;
                 break;
             }
         }
 
-        if (!queueIndex.has_value())
+        if (queueIdx == UINT32_MAX)
         {
             throw std::runtime_error("Graphics and Present queue families not found");
         }
@@ -400,14 +455,14 @@ private:
         vk::StructureChain featureChain = {
             vk::PhysicalDeviceFeatures2 {},
             vk::PhysicalDeviceVulkan11Features {.shaderDrawParameters = true},
-            vk::PhysicalDeviceVulkan13Features {.dynamicRendering = true},
+            vk::PhysicalDeviceVulkan13Features {.synchronization2 = true, .dynamicRendering = true},
             vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {.extendedDynamicState = true}
         };
 
         float queuePriority = 0.5f; // priority for scheduling of command buffer execution, needed even if there is one queue
         vk::DeviceQueueCreateInfo deviceQueueCreateInfo
         {
-            .queueFamilyIndex = queueIndex.value(),
+            .queueFamilyIndex = queueIdx,
             .queueCount       = 1,
             .pQueuePriorities = &queuePriority
         };
@@ -421,8 +476,8 @@ private:
             .ppEnabledExtensionNames = requiredDeviceExtensions.data()
         };
 
-        device = vk::raii::Device(physicalDevice, deviceCreateInfo);
-        queue = vk::raii::Queue(device, queueIndex.value(), 0);
+        logicalDevice = vk::raii::Device(physicalDevice, deviceCreateInfo);
+        queue = vk::raii::Queue(logicalDevice, queueIdx, 0);
     }
 
     vk::SurfaceFormatKHR chooseSwapchainSurfaceFormat(const std::vector<vk::SurfaceFormatKHR> &availableFormats)
@@ -488,6 +543,32 @@ private:
         return minImgCount;
     }
 
+    void cleanupSwapchain()
+    {
+        swapchainImageViews.clear();
+        swapchain = nullptr;
+    }
+
+    void recreateSwapchain()
+    {
+        int width = 0;
+        int height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        while (width == 0 || height == 0)
+        {
+            glfwGetFramebufferSize(window, &width, &height);
+            glfwWaitEvents();
+        }
+
+        logicalDevice.waitIdle();
+
+        swapchainImageViews.clear();
+        // cleanupSwapchain();
+
+        createSwapchain();
+        createImageViews();
+    }
+
     void createSwapchain() 
     {
         vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(*windowSurface);
@@ -514,11 +595,11 @@ private:
             .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
             .presentMode      = presentMode,
             .clipped          = true,
-
-            .oldSwapchain     = nullptr
+            .oldSwapchain     = *swapchain,
         };
 
-        swapchain = vk::raii::SwapchainKHR(device, swapchainCreateInfo);
+        swapchain = vk::raii::SwapchainKHR(logicalDevice, swapchainCreateInfo);
+
         swapchainImages = swapchain.getImages();
     }
 
@@ -536,7 +617,7 @@ private:
         for (vk::Image &image : swapchainImages)
         {
             imageViewCreateInfo.image = image;
-            swapchainImageViews.emplace_back(vk::raii::ImageView(device, imageViewCreateInfo));
+            swapchainImageViews.emplace_back(vk::raii::ImageView(logicalDevice, imageViewCreateInfo));
         }
     }
 
@@ -634,7 +715,7 @@ private:
             .setLayoutCount         = 0,
             .pushConstantRangeCount = 0
         };
-        pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+        pipelineLayout = vk::raii::PipelineLayout(logicalDevice, pipelineLayoutInfo);
 
         vk::StructureChain pipelineCreateInfoChain = {
             vk::GraphicsPipelineCreateInfo
@@ -659,7 +740,7 @@ private:
             }
         };
 
-        graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+        graphicsPipeline = vk::raii::Pipeline(logicalDevice, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
     }
 
     [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char> &code) const
@@ -670,7 +751,7 @@ private:
             .pCode    = reinterpret_cast<const uint32_t*>(code.data())
         };
 
-        vk::raii::ShaderModule shaderModule {device, createInfo};
+        vk::raii::ShaderModule shaderModule {logicalDevice, createInfo};
         return shaderModule;
     }
 
@@ -678,26 +759,28 @@ private:
     {
         vk::CommandPoolCreateInfo poolInfo
         {
-            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-            .queueFamilyIndex = i_queue
+            .flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            .queueFamilyIndex = queueIdx,
         };
-        commandPool = vk::raii::CommandPool(device, poolInfo);
+        commandPool = vk::raii::CommandPool(logicalDevice, poolInfo);
     }
 
-    void createCommandBuffer()
+    void createCommandBuffers()
     {
         vk::CommandBufferAllocateInfo allocInfo
         {
-            .commandPool = commandPool,
-            .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = 1
+            .commandPool        = commandPool,
+            .level              = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = maxFramesInFlight,
         };
 
-        commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+        commandBuffers = vk::raii::CommandBuffers(logicalDevice, allocInfo);
     }
 
     void recordCommandBuffer(uint32_t imageIdx)
     {
+        vk::raii::CommandBuffer& commandBuffer = commandBuffers[frameIdx];
+
         commandBuffer.begin(vk::CommandBufferBeginInfo{});
 
         // changing image layout from undefined to color attachment optimal
@@ -787,16 +870,31 @@ private:
         vk::DependencyInfo dependencyInfo = {
             .dependencyFlags         = {},
             .imageMemoryBarrierCount = 1,
-            .pImageMemoryBarriers    = &barrier
+            .pImageMemoryBarriers    = &barrier,
         };
 
-        commandBuffer.pipelineBarrier2(dependencyInfo);
+        commandBuffers[frameIdx].pipelineBarrier2(dependencyInfo);
     }
 
     void createSyncObjects()
     {
-        presentCompleteSphr = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo{});
-        renderFinishedSphr  = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo{});
-        drawFence           = vk::raii::Fence    (device, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+        assert(presentCompleteSphrs.empty() && renderFinishedSphrs.empty() && drawFences.empty());
+
+        for (int i = 0; i < swapchainImages.size(); i++)
+        {
+            renderFinishedSphrs.emplace_back(logicalDevice, vk::SemaphoreCreateInfo{});
+        }
+
+        for (int i = 0; i < maxFramesInFlight; i++)
+        {
+            presentCompleteSphrs.emplace_back(logicalDevice, vk::SemaphoreCreateInfo{});
+            drawFences.emplace_back(logicalDevice, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+        }
+    }
+
+    static void framebufferSizeCallback(GLFWwindow* window, int width, int height)
+    {
+        Application* app = reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
+        app->framebufferResized = true;
     }
 };
