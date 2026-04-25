@@ -1,3 +1,11 @@
+struct UniformBuffer
+{
+	float4x4 model;
+	float4x4 view;
+	float4x4 proj;
+};
+ConstantBuffer<UniformBuffer> ubo;
+
 struct VSInput
 {
 	float2 pos;
@@ -14,7 +22,7 @@ struct VSOutput
 VSOutput vertMain(VSInput input)
 {
 	VSOutput output;
-	output.pos = float4(input.pos, 0.0, 1.0);
+	output.pos = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.pos, 0.0, 1.0))));
 	output.col = input.col;
 	return output;
 }

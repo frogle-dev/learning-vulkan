@@ -4,12 +4,14 @@
 #include <SDL3/SDL_vulkan.h>
 #include <SDL3/SDL_hints.h>
 
+#include <glm/ext/matrix_transform.hpp>
 #include <vulkan/vulkan_core.h>
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include "vulkan/vulkan.hpp"
 #include <vulkan/vulkan_raii.hpp>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <assert.h>
 #include <algorithm>
@@ -19,6 +21,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <fstream>
+#include <chrono>
 
 inline std::filesystem::path appPath()
 {
@@ -52,16 +55,33 @@ struct Vertex
 
     static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
     {
-        return {{{.location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos)},
-                 {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, col)}}};
+        return
+        {
+            {
+                {.location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos)},
+                {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, col)}
+            }
+        };
     }
 };
 
 const std::vector<Vertex> vertices = {
     // pos           // col
-    {{ 0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{ 0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{ 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{ 0.5f,  0.5f}, {0.0f, 0.5f, 0.0f}},
     {{-0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}}
+};
+
+const std::vector<uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
+};
+
+struct UniformBufferObject
+{
+    alignas(16) glm::mat4 model;
+    alignas(16) glm::mat4 view;
+    alignas(16) glm::mat4 proj;
 };
 
 class Application
@@ -102,6 +122,7 @@ private:
     vk::Extent2D                     swapchainExtent;
     std::vector<vk::raii::ImageView> swapchainImageViews;
 
+    vk::raii::DescriptorSetLayout    descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout         pipelineLayout   = nullptr;
     vk::raii::Pipeline               graphicsPipeline = nullptr;
 
@@ -112,8 +133,18 @@ private:
     uint32_t                         frameIdx = 0;
     bool                             framebufferResized = false;
 
+    // buffers
     vk::raii::Buffer       vertexBuffer       = nullptr;
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+    vk::raii::Buffer       indexBuffer        = nullptr;
+    vk::raii::DeviceMemory indexBufferMemory  = nullptr;
+
+    std::vector<vk::raii::Buffer> uniformBuffers;
+    std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
+    std::vector<void*> uniformBuffersMapped;
+
+    vk::raii::DescriptorPool descriptorPool = nullptr;
+    std::vector<vk::raii::DescriptorSet> descriptorSets;
 
     // Sync objects
     std::vector<vk::raii::Semaphore> presentCompleteSphrs;
@@ -139,9 +170,14 @@ private:
         createLogicalDevice();
         createSwapchain();
         createImageViews();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createCommandPool();
         createVertexBuffer();
+        createIndexBuffer();
+        createUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -197,6 +233,8 @@ private:
             return;
         }
 
+        updateUniformBuffer(frameIdx);
+
         logicalDevice.resetFences(*drawFences[frameIdx]);
 
         commandBuffers[frameIdx].reset();
@@ -245,6 +283,22 @@ private:
         }
 
         frameIdx = (frameIdx + 1) % maxFramesInFlight;
+    }
+
+    void updateUniformBuffer(uint32_t currentImage)
+    {
+        static std::chrono::time_point startTime = std::chrono::high_resolution_clock::now();
+        std::chrono::time_point currentTime = std::chrono::high_resolution_clock::now();
+
+        float deltaTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        UniformBufferObject ubo;
+        ubo.model = glm::rotate(glm::mat4(1.0f), deltaTime * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapchainExtent.width) / static_cast<float>(swapchainExtent.height), 0.1f, 10.0f);
+        ubo.proj[1][1] *= -1;
+
+        memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
 
     void cleanup()
@@ -659,6 +713,17 @@ private:
         }
     }
 
+    void createDescriptorSetLayout()
+    {
+        vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
+        vk::DescriptorSetLayoutCreateInfo layoutInfo
+        {
+            .bindingCount = 1,
+            .pBindings    = &uboLayoutBinding,
+        };
+        descriptorSetLayout = vk::raii::DescriptorSetLayout(logicalDevice, layoutInfo);
+    }
+
     void createGraphicsPipeline()
     {
         /* SHADER STAGE SETUP */
@@ -720,7 +785,7 @@ private:
             .rasterizerDiscardEnable = vk::False, // if true, skips rasterizer stage
             .polygonMode             = vk::PolygonMode::eFill,
             .cullMode                = vk::CullModeFlagBits::eBack,
-            .frontFace               = vk::FrontFace::eClockwise,
+            .frontFace               = vk::FrontFace::eCounterClockwise,
             .depthBiasEnable         = vk::False, // if true, rasterizer can make adjustments to depth values
             .lineWidth               = 1.0f
         };
@@ -758,7 +823,8 @@ private:
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo
         {
-            .setLayoutCount         = 0,
+            .setLayoutCount         = 1,
+            .pSetLayouts            = &*descriptorSetLayout,
             .pushConstantRangeCount = 0
         };
         pipelineLayout = vk::raii::PipelineLayout(logicalDevice, pipelineLayoutInfo);
@@ -811,34 +877,6 @@ private:
         commandPool = vk::raii::CommandPool(logicalDevice, poolInfo);
     }
 
-    void createVertexBuffer()
-    {
-        vk::BufferCreateInfo bufferInfo
-        {
-            .size        = sizeof(vertices[0]) * vertices.size(),
-            .usage       = vk::BufferUsageFlagBits::eVertexBuffer,
-            .sharingMode = vk::SharingMode::eExclusive,
-        };
-
-        vertexBuffer = vk::raii::Buffer(logicalDevice, bufferInfo);
-
-        vk::MemoryRequirements memRequirements = vertexBuffer.getMemoryRequirements();
-
-        vk::MemoryAllocateInfo memoryAllocateInfo
-        {
-            .allocationSize  = memRequirements.size,
-            .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent),
-        };
-
-        vertexBufferMemory = vk::raii::DeviceMemory(logicalDevice, memoryAllocateInfo);
-
-        vertexBuffer.bindMemory(*vertexBufferMemory, 0);
-
-        void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
-        memcpy(data, vertices.data(), bufferInfo.size);
-        vertexBufferMemory.unmapMemory();
-    }
-
     uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
     {
         vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
@@ -852,6 +890,167 @@ private:
         }
 
         throw std::runtime_error("Failed to find suitable memory type");
+    }
+
+    void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
+    {
+        vk::BufferCreateInfo bufferInfo
+        {
+            .size        = size,
+            .usage       = usage,
+            .sharingMode = vk::SharingMode::eExclusive,
+        };
+
+        buffer = vk::raii::Buffer(logicalDevice, bufferInfo);
+
+        vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo memoryAllocateInfo
+        {
+            .allocationSize  = memRequirements.size,
+            .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties),
+        };
+
+        bufferMemory = vk::raii::DeviceMemory(logicalDevice, memoryAllocateInfo);
+
+        buffer.bindMemory(*bufferMemory, 0);
+    }
+
+    void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
+    {
+        vk::CommandBufferAllocateInfo allocInfo
+        {
+            .commandPool        = commandPool,
+            .level              = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1,
+        };
+        vk::raii::CommandBuffer commandCopyBuffer = std::move(logicalDevice.allocateCommandBuffers(allocInfo).front());
+
+        commandCopyBuffer.begin(vk::CommandBufferBeginInfo
+            {
+                .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+            });
+
+        commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
+
+        commandCopyBuffer.end();
+
+        queue.submit(vk::SubmitInfo
+            {
+                .commandBufferCount = 1,
+                .pCommandBuffers = &*commandCopyBuffer
+            }, nullptr);
+
+        queue.waitIdle();
+    }
+
+    void createVertexBuffer()
+    {
+        vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+        // staging buffer, CPU vertex data will be put here and then transferred to the GPU local vertex buffer
+        vk::raii::Buffer stagingBuffer = nullptr;
+        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+        void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+        memcpy(dataStaging, vertices.data(), bufferSize);
+        stagingBufferMemory.unmapMemory();
+
+        // vertex buffer
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
+
+        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+    }
+
+    void createIndexBuffer()
+    {
+        vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+        // staging buffer, CPU vertex data will be put here and then transferred to the GPU local vertex buffer
+        vk::raii::Buffer stagingBuffer = nullptr;
+        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+        void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+        memcpy(dataStaging, indices.data(), bufferSize);
+        stagingBufferMemory.unmapMemory();
+
+        // vertex buffer
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+    }
+
+    void createUniformBuffers()
+    {
+        uniformBuffers.clear();
+        uniformBuffersMemory.clear();
+        uniformBuffersMapped.clear();
+
+        for (int i = 0; i < maxFramesInFlight; i++)
+        {
+            vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+            vk::raii::Buffer buffer = nullptr;
+            vk::raii::DeviceMemory bufferMem = nullptr;
+
+            createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMem);
+
+            uniformBuffers.emplace_back(std::move(buffer));
+            uniformBuffersMemory.emplace_back(std::move(bufferMem));
+            uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, bufferSize));
+        }
+    }
+
+    void createDescriptorPool()
+    {
+        vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, maxFramesInFlight);
+
+        vk::DescriptorPoolCreateInfo poolInfo
+        {
+            .flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets       = maxFramesInFlight,
+            .poolSizeCount = 1,
+            .pPoolSizes    = &poolSize,
+        };
+
+        descriptorPool = vk::raii::DescriptorPool(logicalDevice, poolInfo);
+    }
+
+    void createDescriptorSets()
+    {
+        std::vector<vk::DescriptorSetLayout> layouts(maxFramesInFlight, *descriptorSetLayout);
+        vk::DescriptorSetAllocateInfo allocInfo
+        {
+            .descriptorPool     = descriptorPool,
+            .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+            .pSetLayouts        = layouts.data(),
+        };
+
+        descriptorSets.clear();
+        descriptorSets = logicalDevice.allocateDescriptorSets(allocInfo);
+
+        for (int i = 0; i < maxFramesInFlight; i++)
+        {
+            vk::DescriptorBufferInfo bufferInfo
+            {
+                .buffer = uniformBuffers[i],
+                .offset = 0,
+                .range  = sizeof(UniformBufferObject),
+            };
+
+            vk::WriteDescriptorSet descriptorWrite
+            {
+                .dstSet          = descriptorSets[i],
+                .dstBinding      = 0,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType  = vk::DescriptorType::eUniformBuffer,
+                .pBufferInfo     = &bufferInfo,
+            };
+
+            logicalDevice.updateDescriptorSets(descriptorWrite, {});
+        }
     }
 
     void createCommandBuffers()
@@ -912,8 +1111,10 @@ private:
         commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapchainExtent));
 
         commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
+        commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
 
-        commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[frameIdx], nullptr);
+        commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
         commandBuffer.endRendering();
 
