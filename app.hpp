@@ -1,18 +1,15 @@
 #pragma once
 
-#include <SDL3/SDL_events.h>
-#include <SDL3/SDL_init.h>
-#include <SDL3/SDL_oldnames.h>
-#include <SDL3/SDL_video.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#include <SDL3/SDL_hints.h>
+
 #include <vulkan/vulkan_core.h>
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include "vulkan/vulkan.hpp"
 #include <vulkan/vulkan_raii.hpp>
 
-// #define GLFW_INCLUDE_VULKAN
-// #include <GLFW/glfw3.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
+#include <glm/glm.hpp>
 
 #include <assert.h>
 #include <algorithm>
@@ -29,7 +26,7 @@ inline std::filesystem::path appPath()
 }
 
 constexpr uint16_t width = 960;
-constexpr uint16_t height = 540;
+constexpr uint16_t height = 960;
 
 constexpr uint8_t maxFramesInFlight = 2;
 
@@ -41,6 +38,30 @@ constexpr bool enableValidationLayers = true;
 
 constexpr std::array<char const*, 1> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
+};
+
+struct Vertex
+{
+    glm::vec2 pos;
+    glm::vec3 col;
+
+    static vk::VertexInputBindingDescription getBindingDescription()
+    {
+        return {.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
+    }
+
+    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
+    {
+        return {{{.location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos)},
+                 {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, col)}}};
+    }
+};
+
+const std::vector<Vertex> vertices = {
+    // pos           // col
+    {{ 0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{ 0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}}
 };
 
 class Application
@@ -55,7 +76,6 @@ public:
     }
 
 private:
-    // GLFWwindow* window = nullptr;
     SDL_Window* window = nullptr;
 
     SDL_Event event;
@@ -92,6 +112,9 @@ private:
     uint32_t                         frameIdx = 0;
     bool                             framebufferResized = false;
 
+    vk::raii::Buffer       vertexBuffer       = nullptr;
+    vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+
     // Sync objects
     std::vector<vk::raii::Semaphore> presentCompleteSphrs;
     std::vector<vk::raii::Semaphore> renderFinishedSphrs;
@@ -101,17 +124,10 @@ private:
 
     void initWindow()
     {
-        // glfwInit();
         SDL_Init(SDL_INIT_VIDEO);
 
-        // glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        // glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-
-        // window = glfwCreateWindow(width, height, "Learn Vulkan", nullptr, nullptr);
-        // glfwSetWindowUserPointer(window, this);
-        // glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
-
-        window = SDL_CreateWindow("Hello, Vulkan!", width, height, SDL_WINDOW_RESIZABLE);
+        SDL_SetHint(SDL_HINT_APP_ID, "HelloVulkan");
+        window = SDL_CreateWindow("HelloVulkan", width, height, SDL_WINDOW_RESIZABLE);
     }
 
     void initVulkan()
@@ -125,6 +141,7 @@ private:
         createImageViews();
         createGraphicsPipeline();
         createCommandPool();
+        createVertexBuffer();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -544,7 +561,6 @@ private:
         }
 
         int width, height;
-        // glfwGetFramebufferSize(window, &width, &height);
         SDL_GetWindowSizeInPixels(window, &width, &height);
 
         return vk::Extent2D{
@@ -575,13 +591,10 @@ private:
     {
         int width = 0;
         int height = 0;
-        // glfwGetFramebufferSize(window, &width, &height);
         SDL_GetWindowSizeInPixels(window, &width, &height);
         while (width == 0 || height == 0)
         {
-            // glfwGetFramebufferSize(window, &width, &height);
             SDL_GetWindowSizeInPixels(window, &width, &height);
-            // glfwWaitEvents();
             SDL_WaitEvent(&event);
         }
 
@@ -671,7 +684,15 @@ private:
 
         /* INPUT STAGE SETUP */
 
-        vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo
+        {
+            .vertexBindingDescriptionCount   = 1,
+            .pVertexBindingDescriptions      = &bindingDescription,
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+            .pVertexAttributeDescriptions    = attributeDescriptions.data()
+        };
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly
         {
@@ -790,6 +811,49 @@ private:
         commandPool = vk::raii::CommandPool(logicalDevice, poolInfo);
     }
 
+    void createVertexBuffer()
+    {
+        vk::BufferCreateInfo bufferInfo
+        {
+            .size        = sizeof(vertices[0]) * vertices.size(),
+            .usage       = vk::BufferUsageFlagBits::eVertexBuffer,
+            .sharingMode = vk::SharingMode::eExclusive,
+        };
+
+        vertexBuffer = vk::raii::Buffer(logicalDevice, bufferInfo);
+
+        vk::MemoryRequirements memRequirements = vertexBuffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo memoryAllocateInfo
+        {
+            .allocationSize  = memRequirements.size,
+            .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent),
+        };
+
+        vertexBufferMemory = vk::raii::DeviceMemory(logicalDevice, memoryAllocateInfo);
+
+        vertexBuffer.bindMemory(*vertexBufferMemory, 0);
+
+        void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
+        memcpy(data, vertices.data(), bufferInfo.size);
+        vertexBufferMemory.unmapMemory();
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
+    {
+        vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
+
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+        {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("Failed to find suitable memory type");
+    }
+
     void createCommandBuffers()
     {
         vk::CommandBufferAllocateInfo allocInfo
@@ -847,7 +911,9 @@ private:
         commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width), static_cast<float>(swapchainExtent.height), 0.0f, 1.0f));
         commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapchainExtent));
 
-        commandBuffer.draw(3, 1, 0, 0);
+        commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
+
+        commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
         commandBuffer.endRendering();
 
