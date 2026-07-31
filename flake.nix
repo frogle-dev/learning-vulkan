@@ -12,7 +12,8 @@
           vulkan-loader
           vulkan-validation-layers
           vulkan-tools
-          glslang
+          shaderc
+          shader-slang
           sdl3
           glm
           vulkan-memory-allocator
