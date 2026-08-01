@@ -30,4 +30,4 @@ void App::pollEvents() {
 
 bool App::isRunning() { return running; }
 
-void App::endFrame() { drawFrame(); }
+std::expected<void, FrameError> App::endFrame() { return drawFrame(); }
