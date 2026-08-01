@@ -85,6 +85,10 @@ enum class SurfaceError {
     CreationFailed,
 };
 
+enum class FileError {
+    FailedToOpen,
+};
+
 using AppError = std::variant<VkResult, InstanceError, SurfaceError>;
 
 class App {
@@ -267,14 +271,13 @@ class App {
 
     /* SETUP METHODS */
 
-    static std::vector<char> readFile(const std::string &path) {
+    static std::expected<std::vector<char>, FileError> readFile(const std::string &path) {
         // std::ios::ate - reading starts at the end of file
         // std::ios::binary - reads file as a binary
         std::ifstream fin(path, std::ios::ate | std::ios::binary);
 
         if (!fin.is_open()) {
-            std::print(stderr, "Failed to open file");
-            std::terminate();
+            return std::unexpected(FileError::FailedToOpen);
         }
 
         // get position at end of file to get file length
@@ -322,6 +325,8 @@ class App {
             vkCreateDebugUtilsMessengerEXT(instance, &debugUtilsMessengerCreateInfoEXT, nullptr, &debugMessenger);
         if (result != VK_SUCCESS)
             return std::unexpected(result);
+
+        return {};
     }
 
     std::vector<const char *> getRequiredInstanceExtensions() {
@@ -940,37 +945,41 @@ class App {
 
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer &buffer,
                       VkDeviceMemory &bufferMemory) {
-        vk::BufferCreateInfo bufferInfo{
+        VkBufferCreateInfo bufferInfo{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = size,
             .usage = usage,
             .sharingMode = vk::SharingMode::eExclusive,
         };
 
-        buffer = vk::raii::Buffer(logicalDevice, bufferInfo);
+        buffer = VkBuffer(logicalDevice, bufferInfo);
 
-        vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+        VkMemoryRequirements memRequirements = buffer.getMemoryRequirements();
 
-        vk::MemoryAllocateInfo memoryAllocateInfo{
+        VkMemoryAllocateInfo memoryAllocateInfo{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .allocationSize = memRequirements.size,
             .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties),
         };
 
-        bufferMemory = vk::raii::DeviceMemory(logicalDevice, memoryAllocateInfo);
+        bufferMemory = VkDeviceMemory(logicalDevice, memoryAllocateInfo);
 
         buffer.bindMemory(*bufferMemory, 0);
     }
 
-    vk::raii::CommandBuffer beginOneTimeCommandBuffer() {
-        vk::CommandBufferAllocateInfo allocInfo{
+    VkCommandBuffer beginOneTimeCommandBuffer() {
+        VkCommandBufferAllocateInfo allocInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = commandPool,
             .level = vk::CommandBufferLevel::ePrimary,
             .commandBufferCount = 1,
         };
 
-        vk::raii::CommandBuffer commandBuffer = std::move(logicalDevice.allocateCommandBuffers(allocInfo).front());
+        VkCommandBuffer commandBuffer = std::move(logicalDevice.allocateCommandBuffers(allocInfo).front());
 
-        vk::CommandBufferBeginInfo beginInfo{
-            .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
+        VkCommandBufferBeginInfo beginInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         };
 
         commandBuffer.begin(beginInfo);
@@ -978,10 +987,11 @@ class App {
         return commandBuffer;
     }
 
-    void endOneTimeCommandBuffer(vk::raii::CommandBuffer &commandBuffer) {
+    void endOneTimeCommandBuffer(VkCommandBuffer &commandBuffer) {
         commandBuffer.end();
 
-        vk::SubmitInfo submitInfo{
+        VkSubmitInfo submitInfo{
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .commandBufferCount = 1,
             .pCommandBuffers = &*commandBuffer,
         };
@@ -990,14 +1000,14 @@ class App {
         queue.waitIdle();
     }
 
-    void copyBuffer(vk::raii::Buffer &srcBuffer, vk::raii::Buffer &dstBuffer, vk::DeviceSize size) {
-        vk::raii::CommandBuffer commandCopyBuffer = beginOneTimeCommandBuffer();
-        commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
+    void copyBuffer(VkBuffer &srcBuffer, VkBuffer &dstBuffer, VkDeviceSize size) {
+        VkCommandBuffer commandCopyBuffer = beginOneTimeCommandBuffer();
+        commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vkBufferCopy(0, 0, size));
         endOneTimeCommandBuffer(commandCopyBuffer);
     }
 
     void createVertexBuffer() {
-        vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
         // staging buffer, CPU vertex data will be put here and then transferred
         // to the GPU local vertex buffer
@@ -1181,9 +1191,9 @@ class App {
         commandBuffer.end();
     }
 
-    void transitionImageLayout(uint32_t image_idx, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-                               vk::AccessFlags2 oldAccessMask, vk::AccessFlags2 newAccessMask,
-                               vk::PipelineStageFlags2 oldStageMask, vk::PipelineStageFlags2 newStageMask) {
+    void transitionImageLayout(uint32_t image_idx, VkImageLayout oldLayout, VkImageLayout newLayout,
+                               VkAccessFlags2 oldAccessMask, VkAccessFlags2 newAccessMask,
+                               VkPipelineStageFlags2 oldStageMask, VkPipelineStageFlags2 newStageMask) {
         vk::ImageMemoryBarrier2 barrier = {
             .srcStageMask = oldStageMask,
             .srcAccessMask = oldAccessMask,
