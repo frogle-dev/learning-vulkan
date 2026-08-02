@@ -13,8 +13,7 @@ enum class WindowError {
 
 class Window {
   public:
-    static std::expected<Window, WindowError> init(uint16_t start_width,
-                                                   uint16_t start_height);
+    static std::expected<Window, WindowError> init(uint16_t start_width, uint16_t start_height);
     void deinit();
 
     SDL_Window *getSDLWindow() const;

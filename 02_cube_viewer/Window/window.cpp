@@ -1,7 +1,6 @@
 #include "window.hpp"
 
-std::expected<Window, WindowError> Window::init(uint16_t start_width,
-                                                uint16_t start_height) {
+std::expected<Window, WindowError> Window::init(uint16_t start_width, uint16_t start_height) {
     Window win;
 
     win.width = start_width;
@@ -15,8 +14,7 @@ std::expected<Window, WindowError> Window::init(uint16_t start_width,
         return std::unexpected(WindowError::SdlSetHintFailed);
     }
 
-    win.window = SDL_CreateWindow("HelloVulkan", win.width, win.height,
-                                  SDL_WINDOW_RESIZABLE);
+    win.window = SDL_CreateWindow("HelloVulkan", win.width, win.height, SDL_WINDOW_RESIZABLE);
 
     if (win.window == nullptr) {
         return std::unexpected(WindowError::SdlWindowCreationFailed);
