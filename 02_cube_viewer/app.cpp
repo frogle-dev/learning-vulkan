@@ -3,7 +3,7 @@
 std::expected<App, AppError> App::init(Window &window) {
     App app;
 
-    app.window = &window;
+    app.window  = &window;
     app.running = true;
 
     app.initVulkan();
