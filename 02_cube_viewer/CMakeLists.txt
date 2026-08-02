@@ -45,6 +45,7 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE -fno-exceptions)
+target_compile_options(${PROJECT_NAME} PRIVATE -wswitch)
 
 add_slang_shader_target(shaders
     SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/shader.slang)

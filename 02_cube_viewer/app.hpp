@@ -184,8 +184,9 @@ class App {
 
     /* APPLICATION METHODS */
 
-    void initVulkan() {
-        createInstance();
+    [[nodiscard]]
+    std::expected<void, AppError> initVulkan() {
+        auto expected = createInstance();
         setupDebugMessenger();
         createWindowSurface();
         pickPhysicalDevice();
@@ -747,6 +748,7 @@ class App {
         swapchain = nullptr;
     }
 
+    [[nodiscard]]
     std::expected<void, AppError> recreateSwapchain() {
         int width  = 0;
         int height = 0;
@@ -1135,10 +1137,13 @@ class App {
         return {};
     }
 
+    [[nodiscard]]
     std::expected<void, AppError> transitionImageLayout(const VkImage &image,
                                                         VkImageLayout oldLayout,
                                                         VkImageLayout newLayout) {
-        VkCommandBuffer commandBuffer = beginOneTimeCommandBuffer();
+        auto commandBuffer = beginOneTimeCommandBuffer();
+        if (!commandBuffer)
+            return std::unexpected(commandBuffer.error());
 
         VkImageMemoryBarrier barrier{
             .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1169,10 +1174,13 @@ class App {
             return std::unexpected(ErrorKind::TransitionNotSupported);
         }
 
-        vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, {}, {}, nullptr, 0,
-                             nullptr, 1, &barrier);
+        vkCmdPipelineBarrier(commandBuffer.value(), srcStage, dstStage, {}, {}, nullptr,
+                             0, nullptr, 1, &barrier);
 
-        endOneTimeCommandBuffer(commandBuffer);
+        auto expected = endOneTimeCommandBuffer(commandBuffer.value());
+
+        if (!expected)
+            return std::unexpected(expected.error());
 
         return {};
     }
@@ -1276,9 +1284,13 @@ class App {
         return {};
     }
 
-    void copyBufferToImage(const VkBuffer &buffer, VkImage &image, uint32_t width,
-                           uint32_t height) {
-        VkCommandBuffer commandBuffer = beginOneTimeCommandBuffer();
+    [[nodiscard]]
+    std::expected<void, AppError> copyBufferToImage(const VkBuffer &buffer,
+                                                    VkImage &image, uint32_t width,
+                                                    uint32_t height) {
+        auto commandBuffer = beginOneTimeCommandBuffer();
+        if (!commandBuffer)
+            return std::unexpected(commandBuffer.error());
 
         VkBufferImageCopy region{
             .bufferOffset      = 0,
@@ -1289,12 +1301,15 @@ class App {
             .imageExtent       = {width, height, 1},
         };
 
-        vkCmdCopyBufferToImage(commandBuffer, buffer, image,
+        vkCmdCopyBufferToImage(commandBuffer.value(), buffer, image,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-        endOneTimeCommandBuffer(commandBuffer);
+        auto expected = endOneTimeCommandBuffer(commandBuffer.value());
+        if (!expected)
+            return std::unexpected(expected.error());
     }
 
+    [[nodiscard]]
     std::expected<uint32_t, AppError> findMemoryType(uint32_t typeFilter,
                                                      VkMemoryPropertyFlags properties) {
         VkPhysicalDeviceMemoryProperties memProperties;
@@ -1352,6 +1367,7 @@ class App {
         return {};
     }
 
+    [[nodiscard]]
     std::expected<VkCommandBuffer, AppError> beginOneTimeCommandBuffer() {
         VkCommandBufferAllocateInfo allocInfo{
             .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1379,6 +1395,7 @@ class App {
         return commandBuffer;
     }
 
+    [[nodiscard]]
     std::expected<void, AppError>
     endOneTimeCommandBuffer(VkCommandBuffer &commandBuffer) {
         VkResult result = vkEndCommandBuffer(commandBuffer);
@@ -1402,211 +1419,319 @@ class App {
         return {};
     }
 
-    void copyBuffer(VkBuffer &srcBuffer, VkBuffer &dstBuffer, VkDeviceSize size) {
-        VkCommandBuffer commandCopyBuffer = beginOneTimeCommandBuffer();
-        commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vkBufferCopy(0, 0, size));
-        endOneTimeCommandBuffer(commandCopyBuffer);
+    [[nodiscard]]
+    std::expected<void, AppError> copyBuffer(VkBuffer &srcBuffer, VkBuffer &dstBuffer,
+                                             VkDeviceSize size) {
+        auto commandCopyBuffer = beginOneTimeCommandBuffer();
+        if (!commandCopyBuffer)
+            return std::unexpected(commandCopyBuffer.error());
+
+        VkBufferCopy buffer_copy_region = {0, 0, size};
+        vkCmdCopyBuffer(commandCopyBuffer.value(), srcBuffer, dstBuffer, 1,
+                        &buffer_copy_region);
+
+        auto expected = endOneTimeCommandBuffer(commandCopyBuffer.value());
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        return {};
     }
 
-    void createVertexBuffer() {
+    [[nodiscard]]
+    std::expected<void, AppError> createVertexBuffer() {
         VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
         // staging buffer, CPU vertex data will be put here and then transferred
         // to the GPU local vertex buffer
-        vk::raii::Buffer stagingBuffer             = nullptr;
-        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-                     vk::MemoryPropertyFlagBits::eHostVisible |
-                         vk::MemoryPropertyFlagBits::eHostCoherent,
-                     stagingBuffer, stagingBufferMemory);
+        VkBuffer stagingBuffer             = nullptr;
+        VkDeviceMemory stagingBufferMemory = nullptr;
 
-        void *dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+        auto expected = createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                     stagingBuffer, stagingBufferMemory);
+
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        void *dataStaging;
+        VkResult result = vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize,
+                                      0, &dataStaging);
+
+        if (result != VK_SUCCESS)
+            return std::unexpected(result);
+
         memcpy(dataStaging, vertices.data(), bufferSize);
-        stagingBufferMemory.unmapMemory();
+
+        vkUnmapMemory(logicalDevice, stagingBufferMemory);
 
         // vertex buffer
-        createBuffer(bufferSize,
-                     vk::BufferUsageFlagBits::eVertexBuffer |
-                         vk::BufferUsageFlagBits::eTransferDst,
-                     vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer,
-                     vertexBufferMemory);
+        expected = createBuffer(
+            bufferSize,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
 
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        return {};
     }
 
-    void createIndexBuffer() {
-        vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+    [[nodiscard]]
+    std::expected<void, AppError> createIndexBuffer() {
+        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
         // staging buffer, CPU vertex data will be put here and then transferred
         // to the GPU local vertex buffer
-        vk::raii::Buffer stagingBuffer             = nullptr;
-        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-                     vk::MemoryPropertyFlagBits::eHostVisible |
-                         vk::MemoryPropertyFlagBits::eHostCoherent,
-                     stagingBuffer, stagingBufferMemory);
+        VkBuffer stagingBuffer             = nullptr;
+        VkDeviceMemory stagingBufferMemory = nullptr;
 
-        void *dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+        auto expected = createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                     stagingBuffer, stagingBufferMemory);
+
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        void *dataStaging;
+        VkResult result = vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize,
+                                      0, &dataStaging);
+
+        if (result != VK_SUCCESS) {
+            return std::unexpected(result);
+        }
+
         memcpy(dataStaging, indices.data(), bufferSize);
-        stagingBufferMemory.unmapMemory();
+
+        vkUnmapMemory(logicalDevice, stagingBufferMemory);
 
         // vertex buffer
-        createBuffer(
+        expected = createBuffer(
             bufferSize,
-            vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-            vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
 
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        return {};
     }
 
-    void createUniformBuffers() {
+    [[nodiscard]]
+    std::expected<void, AppError> createUniformBuffers() {
         uniformBuffers.clear();
         uniformBuffersMemory.clear();
         uniformBuffersMapped.clear();
 
         for (int i = 0; i < maxFramesInFlight; i++) {
-            vk::DeviceSize bufferSize        = sizeof(UniformBufferObject);
-            vk::raii::Buffer buffer          = nullptr;
-            vk::raii::DeviceMemory bufferMem = nullptr;
+            VkDeviceSize bufferSize  = sizeof(UniformBufferObject);
+            VkBuffer buffer          = nullptr;
+            VkDeviceMemory bufferMem = nullptr;
 
-            createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
-                         vk::MemoryPropertyFlagBits::eHostVisible |
-                             vk::MemoryPropertyFlagBits::eHostCoherent,
-                         buffer, bufferMem);
+            auto expected = createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                         buffer, bufferMem);
 
+            if (!expected)
+                return std::unexpected(expected.error());
+
+            vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0,
+                        nullptr);
+
+            // why are there std::move here? Can it just be removed?
             uniformBuffers.emplace_back(std::move(buffer));
             uniformBuffersMemory.emplace_back(std::move(bufferMem));
-            uniformBuffersMapped.emplace_back(
-                uniformBuffersMemory[i].mapMemory(0, bufferSize));
+            uniformBuffersMapped.emplace_back(uniformBuffersMemory[i]);
         }
+
+        return {};
     }
 
-    void createDescriptorPool() {
+    [[nodiscard]]
+    std::expected<void, VkResult> createDescriptorPool() {
         std::array poolSize{
-            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, maxFramesInFlight),
-            vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler,
-                                   maxFramesInFlight),
+            VkDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxFramesInFlight),
+            VkDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                 maxFramesInFlight),
         };
 
-        vk::DescriptorPoolCreateInfo poolInfo{
-            .flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        VkDescriptorPoolCreateInfo poolInfo{
+            .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
             .maxSets       = maxFramesInFlight,
             .poolSizeCount = poolSize.size(),
             .pPoolSizes    = poolSize.data(),
         };
 
-        descriptorPool = vk::raii::DescriptorPool(logicalDevice, poolInfo);
+        VkResult result =
+            vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool);
+
+        if (result != VK_SUCCESS)
+            return std::unexpected(result);
+
+        return {};
     }
 
-    void createDescriptorSets() {
-        std::vector<vk::DescriptorSetLayout> layouts(maxFramesInFlight,
-                                                     *descriptorSetLayout);
-        vk::DescriptorSetAllocateInfo allocInfo{
+    [[nodiscard]]
+    std::expected<void, AppError> createDescriptorSets() {
+        std::vector<VkDescriptorSetLayout> layouts(maxFramesInFlight,
+                                                   descriptorSetLayout);
+        VkDescriptorSetAllocateInfo allocInfo{
+            .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool     = descriptorPool,
             .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
             .pSetLayouts        = layouts.data(),
         };
 
         descriptorSets.clear();
-        descriptorSets = logicalDevice.allocateDescriptorSets(allocInfo);
+
+        VkResult result =
+            vkAllocateDescriptorSets(logicalDevice, &allocInfo, descriptorSets.data());
+
+        if (result != VK_SUCCESS)
+            return std::unexpected(result);
 
         for (int i = 0; i < maxFramesInFlight; i++) {
-            vk::DescriptorBufferInfo bufferInfo{
-                .buffer = uniformBuffers[i],
-                .offset = 0,
-                .range  = sizeof(UniformBufferObject),
-            };
+            VkDescriptorBufferInfo bufferInfo{.buffer = uniformBuffers[i],
+                                              .offset = 0,
+                                              .range  = sizeof(UniformBufferObject)};
 
-            vk::DescriptorImageInfo imageInfo{
-                .sampler     = textureSampler,
-                .imageView   = textureImageView,
-                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+            VkDescriptorImageInfo imageInfo{.sampler   = textureSampler,
+                                            .imageView = textureImageView,
+                                            .imageLayout =
+                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 
             std::array descriptorWrites{
-                vk::WriteDescriptorSet{
+                VkWriteDescriptorSet{
+                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .dstSet          = descriptorSets[i],
                     .dstBinding      = 0,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
-                    .descriptorType  = vk::DescriptorType::eUniformBuffer,
+                    .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                     .pBufferInfo     = &bufferInfo,
                 },
-                vk::WriteDescriptorSet{
+                VkWriteDescriptorSet{
+                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .dstSet          = descriptorSets[i],
                     .dstBinding      = 1,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
-                    .descriptorType  = vk::DescriptorType::eCombinedImageSampler,
+                    .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .pImageInfo      = &imageInfo,
                 }};
 
-            logicalDevice.updateDescriptorSets(descriptorWrites, {});
+            vkUpdateDescriptorSets(logicalDevice, descriptorWrites.size(),
+                                   descriptorWrites.data(), 0, nullptr);
         }
+
+        return {};
     }
 
-    void createCommandBuffers() {
-        vk::CommandBufferAllocateInfo allocInfo{
+    [[nodiscard]]
+    std::expected<void, AppError> createCommandBuffers() {
+        VkCommandBufferAllocateInfo allocInfo{
+            .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool        = commandPool,
-            .level              = vk::CommandBufferLevel::ePrimary,
+            .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount = maxFramesInFlight,
         };
 
-        commandBuffers = vk::raii::CommandBuffers(logicalDevice, allocInfo);
+        VkResult result =
+            vkAllocateCommandBuffers(logicalDevice, &allocInfo, commandBuffers.data());
+
+        if (result != VK_SUCCESS)
+            return std::unexpected(result);
     }
 
-    void recordCommandBuffer(uint32_t image_idx) {
-        vk::raii::CommandBuffer &commandBuffer = commandBuffers[frame_idx];
+    [[nodiscard]]
+    std::expected<void, AppError> recordCommandBuffer(uint32_t image_idx) {
+        VkCommandBuffer &commandBuffer = commandBuffers[frame_idx];
 
-        commandBuffer.begin(vk::CommandBufferBeginInfo{});
+        VkResult result = vkBeginCommandBuffer(commandBuffer, {});
+        if (result != VK_SUCCESS)
+            return std::unexpected(result);
 
         // changing image layout from undefined to color attachment optimal
-        transitionImageLayout(image_idx, vk::ImageLayout::eUndefined,
-                              vk::ImageLayout::eColorAttachmentOptimal, {},
-                              vk::AccessFlagBits2::eColorAttachmentWrite,
-                              vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                              vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+        transitionImageLayout(image_idx, VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, {},
+                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
 
-        vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0);
-        vk::RenderingAttachmentInfo attachmentInfo = {
+        VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0};
+
+        VkRenderingAttachmentInfo attachmentInfo = {
+            .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .imageView   = swapchainImageViews[image_idx], // rendering to this image
                                                            // in the swapchain
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp      = vk::AttachmentLoadOp::eClear,
-            .storeOp     = vk::AttachmentStoreOp::eStore,
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue  = clearColor};
 
-        vk::RenderingInfo renderingInfo = {
+        VkRenderingInfo renderingInfo = {
+            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
             .renderArea           = {.offset = {0, 0}, .extent = swapchainExtent},
             .layerCount           = 1,
             .colorAttachmentCount = 1,
             .pColorAttachments    = &attachmentInfo,
         };
 
-        commandBuffer.beginRendering(renderingInfo);
+        vkCmdBeginRendering(commandBuffer, &renderingInfo);
 
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          graphicsPipeline);
 
-        commandBuffer.setViewport(
-            0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),
-                            static_cast<float>(swapchainExtent.height), 0.0f, 1.0f));
-        commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapchainExtent));
+        VkViewport viewport = {0.0f,
+                               0.0f,
+                               static_cast<float>(swapchainExtent.width),
+                               static_cast<float>(swapchainExtent.height),
+                               0.0f,
+                               1.0f};
 
-        commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
-        commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout,
-                                         0, *descriptorSets[frame_idx], nullptr);
-        commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+        VkRect2D scissor = {VkOffset2D(0, 0), swapchainExtent};
 
-        commandBuffer.endRendering();
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        transitionImageLayout(image_idx, vk::ImageLayout::eColorAttachmentOptimal,
-                              vk::ImageLayout::ePresentSrcKHR,
-                              vk::AccessFlagBits2::eColorAttachmentWrite, {},
-                              vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                              vk::PipelineStageFlagBits2::eBottomOfPipe);
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, nullptr);
+        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-        commandBuffer.end();
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout, 0, 1, &descriptorSets[frame_idx], 0,
+                                nullptr);
+
+        vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0,
+                         0);
+
+        vkCmdEndRendering(commandBuffer);
+
+        transitionImageLayout(image_idx, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                              VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, {},
+                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                              VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+
+        result = vkEndCommandBuffer(commandBuffer);
+
+        if (result != VK_SUCCESS)
+            return std::unexpected(result);
+
+        return {};
     }
 
     void transitionImageLayout(uint32_t image_idx, VkImageLayout oldLayout,
@@ -1614,7 +1739,9 @@ class App {
                                VkAccessFlags2 newAccessMask,
                                VkPipelineStageFlags2 oldStageMask,
                                VkPipelineStageFlags2 newStageMask) {
-        vk::ImageMemoryBarrier2 barrier = {
+
+        VkImageMemoryBarrier2 barrier = {
+            .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .srcStageMask        = oldStageMask,
             .srcAccessMask       = oldAccessMask,
             .dstStageMask        = newStageMask,
@@ -1624,35 +1751,52 @@ class App {
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .image               = swapchainImages[image_idx],
-            .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+            .subresourceRange    = {.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
                                     .baseMipLevel   = 0,
                                     .levelCount     = 1,
                                     .baseArrayLayer = 0,
                                     .layerCount     = 1},
         };
 
-        vk::DependencyInfo dependencyInfo = {
+        VkDependencyInfo dependencyInfo = {
+            .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
             .dependencyFlags         = {},
             .imageMemoryBarrierCount = 1,
             .pImageMemoryBarriers    = &barrier,
         };
 
-        commandBuffers[frame_idx].pipelineBarrier2(dependencyInfo);
+        vkCmdPipelineBarrier2(commandBuffers[frame_idx], &dependencyInfo);
     }
 
-    void createSyncObjects() {
+    [[nodiscard]]
+    std::expected<void, AppError> createSyncObjects() {
         assert(presentCompleteSphrs.empty() && renderFinishedSphrs.empty() &&
                drawFences.empty());
 
         for (int i = 0; i < swapchainImages.size(); i++) {
-            renderFinishedSphrs.emplace_back(logicalDevice, vk::SemaphoreCreateInfo{});
+            VkResult result = vkCreateSemaphore(logicalDevice, nullptr, nullptr,
+                                                &renderFinishedSphrs[i]);
+
+            if (result != VK_SUCCESS)
+                return std::unexpected(result);
         }
 
         for (int i = 0; i < maxFramesInFlight; i++) {
-            presentCompleteSphrs.emplace_back(logicalDevice, vk::SemaphoreCreateInfo{});
-            drawFences.emplace_back(
-                logicalDevice,
-                vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+            VkResult result = vkCreateSemaphore(logicalDevice, nullptr, nullptr,
+                                                &presentCompleteSphrs[i]);
+
+            if (result != VK_SUCCESS)
+                return std::unexpected(result);
+
+            VkFenceCreateInfo fence_create_info = {.flags = VK_FENCE_CREATE_SIGNALED_BIT};
+
+            result =
+                vkCreateFence(logicalDevice, &fence_create_info, nullptr, &drawFences[i]);
+
+            if (result != VK_SUCCESS)
+                return std::unexpected(result);
         }
+
+        return {};
     }
 };
