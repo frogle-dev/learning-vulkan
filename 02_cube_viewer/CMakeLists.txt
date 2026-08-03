@@ -52,9 +52,11 @@ function(add_slang_shader_target TARGET)
     add_custom_target(${TARGET} DEPENDS ${SHADERS_DIR}/slang.spv)
 endfunction()
 
+add_executable(${PROJECT_NAME})
+
 target_sources(${PROJECT_NAME} PRIVATE main.cpp)
 
-add_executable(${PROJECT_NAME})
+target_precompile_headers(${PROJECT_NAME} PRIVATE pch.hpp)
 
 target_link_libraries(${PROJECT_NAME}
         Vulkan::Vulkan
@@ -63,8 +65,6 @@ target_link_libraries(${PROJECT_NAME}
         GPUOpen::VulkanMemoryAllocator
         spdlog::spdlog
 )
-
-target_precompile_headers(${PROJECT_NAME} PRIVATE pch.hpp)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
                                     -fsanitize=address
