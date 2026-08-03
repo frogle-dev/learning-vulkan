@@ -1,9 +1,10 @@
 #include "window.hpp"
 
-std::expected<Window, WindowError> Window::init(uint16_t start_width, uint16_t start_height) {
+std::expected<Window, WindowError> Window::init(uint16_t start_width, uint16_t start_height)
+{
     Window win;
 
-    win.width = start_width;
+    win.width  = start_width;
     win.height = start_height;
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -23,7 +24,8 @@ std::expected<Window, WindowError> Window::init(uint16_t start_width, uint16_t s
     return win;
 }
 
-void Window::deinit() {
+void Window::deinit()
+{
     SDL_DestroyWindow(window);
 
     SDL_Quit();

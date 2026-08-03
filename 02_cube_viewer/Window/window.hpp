@@ -11,7 +11,8 @@ enum class WindowError {
     SdlWindowCreationFailed,
 };
 
-class Window {
+class Window
+{
   public:
     static std::expected<Window, WindowError> init(uint16_t start_width, uint16_t start_height);
     void deinit();

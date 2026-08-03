@@ -1,5 +1,6 @@
 #pragma once
 
+#include <complex>
 #define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include "vulkan/vulkan.hpp"
@@ -31,7 +32,8 @@ constexpr bool enable_validation_layers = true;
 
 constexpr std::array<char const *, 1> validation_layers = {"VK_LAYER_KHRONOS_validation"};
 
-struct Vertex {
+struct Vertex
+{
     glm::vec2 pos_;
     glm::vec3 col_;
     glm::vec2 tex_coord_;
@@ -69,14 +71,17 @@ const std::vector<Vertex> vertices = {
 
 const std::vector<uint16_t> indices = {0, 1, 2, 2, 3, 0};
 
-struct UniformBufferObject {
+struct UniformBufferObject
+{
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
 };
 
-enum class ErrorKind {
+enum class ErrorKind
+{
     VulkanFailure,
+    SDLFailure,
     ValidationLayerNotSupported,
     ExtensionNotSupported,
     SurfaceCreationFailed,
@@ -88,7 +93,8 @@ enum class ErrorKind {
     NoSuitableMemoryType,
 };
 
-struct AppError {
+struct AppError
+{
     AppError(std::string message, ErrorKind kind,
              std::source_location location = std::source_location::current())
         : kind_(kind), message_(std::move(message)), location_(location)
@@ -138,7 +144,7 @@ class App
     vk::PhysicalDevice physical_device_ = nullptr; // Physical device represents the GPU
     vk::Device logical_device_ = nullptr; // Logical Device is the interface for the physical device
     vk::Queue queue_           = nullptr;
-    uint32_t queue_idx_        = UINT32_MAX;
+    uint32_t queue_family_idx_ = UINT32_MAX;
 
     vk::DebugUtilsMessengerEXT debug_messenger_ = nullptr;
 
@@ -190,83 +196,83 @@ class App
     {
         auto expected = createInstance();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = setupDebugMessenger();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createWindowSurface();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = pickPhysicalDevice();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createLogicalDevice();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createSwapchain();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createImageViews();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createDescriptorSetLayout();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createGraphicsPipeline();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createCommandPool();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createTextureImage();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createTextureImageView();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createTextureSampler();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createVertexBuffer();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createIndexBuffer();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createUniformBuffers();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createDescriptorPool();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createDescriptorSets();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createCommandBuffers();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createSyncObjects();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
@@ -284,15 +290,17 @@ class App
         result = logical_device_.acquireNextImageKHR(
             swapchain_, UINT64_MAX, present_complete_sphrs_[frame_idx_], nullptr, &image_idx);
 
-        if (result == vk::Result::eErrorOutOfDateKHR) {
+        if (result == vk::Result::eErrorOutOfDateKHR)
+        {
             auto expected = recreateSwapchain();
             if (!expected)
-                return std::unexpected(expected.error());
+                return AppError::unexpected(expected.error());
 
             return AppError::unexpected({"Swapchain image out of date", result});
         }
 
-        if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
+        if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+        {
             assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
 
             return AppError::unexpected({"Failed to acquire swap chain image", result});
@@ -340,7 +348,8 @@ class App
 
         result = queue_.presentKHR(&presentInfoKHR);
         assert(result == vk::Result::eSuccess);
-        if (result == vk::Result::eSuboptimalKHR || result == vk::Result::eErrorOutOfDateKHR) {
+        if (result == vk::Result::eSuboptimalKHR || result == vk::Result::eErrorOutOfDateKHR)
+        {
             auto expected = recreateSwapchain();
 
             if (!expected)
@@ -385,7 +394,8 @@ class App
         // std::ios::binary - reads file as a binary
         std::ifstream fin(path, std::ios::ate | std::ios::binary);
 
-        if (!fin.is_open()) {
+        if (!fin.is_open())
+        {
             return AppError::unexpected({"Failed to open file", ErrorKind::FailedToOpenFile});
         }
 
@@ -407,7 +417,8 @@ class App
         vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type,
         const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData)
     {
-        switch (severity) {
+        switch (severity)
+        {
         case vk::DebugUtilsMessageSeverityFlagBitsEXT::eError:
             spdlog::error("[Validation Layer]: \n \
                                 [Type]: {} \n \n \
@@ -465,7 +476,8 @@ class App
         char const *const *sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
 
         std::vector extensions(sdlExtensions, sdlExtensions + sdlExtensionCount);
-        if (enable_validation_layers) {
+        if (enable_validation_layers)
+        {
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
 
@@ -485,7 +497,8 @@ class App
 
         // VALIDATION LAYERS
         std::vector<char const *> required_layers;
-        if (enable_validation_layers) {
+        if (enable_validation_layers)
+        {
             required_layers.assign(validation_layers.begin(), validation_layers.end());
         }
 
@@ -495,16 +508,20 @@ class App
             return AppError::unexpected(
                 {"Failed to enumerate instance layer properties", layer_properties.result});
 
-        for (char const *required_layer : required_layers) {
+        for (char const *required_layer : required_layers)
+        {
             bool found = false;
-            for (auto const &layer : layer_properties.value) {
-                if (strcmp(layer.layerName, required_layer) == 0) {
+            for (auto const &layer : layer_properties.value)
+            {
+                if (strcmp(layer.layerName, required_layer) == 0)
+                {
                     found = true;
                     break;
                 }
             }
 
-            if (!found) {
+            if (!found)
+            {
                 return AppError::unexpected(
                     {"Validation layer not supported", ErrorKind::ValidationLayerNotSupported});
             }
@@ -518,16 +535,20 @@ class App
             return AppError::unexpected(
                 {"Failed to enumerate extension properties", extension_properties.result});
 
-        for (char const *required_extension : required_extensions) {
+        for (char const *required_extension : required_extensions)
+        {
             bool found = false;
-            for (auto const &extension : extension_properties.value) {
-                if (strcmp(extension.extensionName, required_extension)) {
+            for (auto const &extension : extension_properties.value)
+            {
+                if (strcmp(extension.extensionName, required_extension))
+                {
                     found = true;
                     break;
                 }
             }
 
-            if (!found) {
+            if (!found)
+            {
                 return AppError::unexpected(
                     {"Extension not supported", ErrorKind::ExtensionNotSupported});
             }
@@ -542,7 +563,8 @@ class App
             .ppEnabledExtensionNames = required_extensions.data()};
 
         vk::Result result = vk::createInstance(&createInfo, nullptr, &instance_);
-        if (result != vk::Result::eSuccess) {
+        if (result != vk::Result::eSuccess)
+        {
             return AppError::unexpected({"Failed to create instance", result});
         }
 
@@ -552,14 +574,16 @@ class App
     [[nodiscard]]
     Result<void> createWindowSurface()
     {
-        VkSurfaceKHR surface;
+        VkSurfaceKHR c_surface;
 
-        if (!SDL_Vulkan_CreateSurface(window->getSDLWindow(), instance, nullptr, &surface)) {
-            std::print(stderr, "SDL_Vulkan_CreateSurface failed: {}\n", SDL_GetError());
-            return std::unexpected(ErrorKind::SurfaceCreationFailed);
+        if (!SDL_Vulkan_CreateSurface(window_->getSDLWindow(), instance_, nullptr, &c_surface))
+        {
+            return AppError::unexpected(
+                {"SDL_Vulkan_CreateSurface failed: " + std::string(SDL_GetError()),
+                 ErrorKind::SurfaceCreationFailed});
         }
 
-        windowSurface = surface;
+        window_surface_ = vk::SurfaceKHR(c_surface);
         return {};
     }
 
@@ -578,8 +602,10 @@ class App
                                                  queue_families.data());
 
         bool supports_graphics = false;
-        for (auto const &queue_family : queue_families) {
-            if (queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+        for (auto const &queue_family : queue_families)
+        {
+            if (queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            {
                 supports_graphics = true;
                 break;
             }
@@ -594,16 +620,20 @@ class App
 
         // if any of the required device extensions aren't available -> false
         bool supports_all_required_extensions = true;
-        for (char const *required_device_extension : required_device_extensions) {
+        for (char const *required_device_extension : required_device_extensions_)
+        {
             bool found = true;
-            for (auto const &available_device_extension : available_device_extensions) {
+            for (auto const &available_device_extension : available_device_extensions)
+            {
                 if (strcmp(available_device_extension.extensionName, required_device_extension) ==
-                    0) {
+                    0)
+                {
                     found = true;
                     break;
                 }
             }
-            if (!found) {
+            if (!found)
+            {
                 supports_all_required_extensions = false;
                 break;
             }
@@ -641,125 +671,124 @@ class App
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> pickPhysicalDevice()
+    Result<void> pickPhysicalDevice()
     {
         // checking if physical devices meet requirements
 
-        uint32_t physical_device_count = 0;
-        vkEnumeratePhysicalDevices(instance, &physical_device_count, nullptr);
-        std::vector<VkPhysicalDevice> physical_devices(physical_device_count);
-        vkEnumeratePhysicalDevices(instance, &physical_device_count, physical_devices.data());
+        auto physical_devices = instance_.enumeratePhysicalDevices();
+        if (physical_devices.result != vk::Result::eSuccess)
+            return AppError::unexpected(
+                {"Failed to enumerate physical device", physical_devices.result});
 
         // find if a GPU meets all the requirements
         bool found = false;
-        for (auto const &physical_device : physical_devices) {
-            if (isDeviceSuitable(physical_device)) {
-                found          = true;
-                physicalDevice = physical_device;
+        for (auto const &physical_device : physical_devices.value)
+        {
+            if (isDeviceSuitable(physical_device))
+            {
+                found            = true;
+                physical_device_ = physical_device;
                 break;
             }
         }
-        if (!found) {
-            return std::unexpected(ErrorKind::FailedToFindGPU);
+        if (!found)
+        {
+            return AppError::unexpected(
+                {"Failed to find physical device", ErrorKind::FailedToFindGPU});
         }
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createLogicalDevice()
+    Result<void> createLogicalDevice()
     {
-        uint32_t queue_family_properties_count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queue_family_properties_count,
-                                                 nullptr);
-        std::vector<VkQueueFamilyProperties> queue_family_properties(queue_family_properties_count);
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queue_family_properties_count,
-                                                 queue_family_properties.data());
+        auto queue_family_properties = physical_device_.getQueueFamilyProperties();
 
         // check for support of both graphics and present queue families
         for (uint32_t queue_family_prop_idx = 0;
-             queue_family_prop_idx < queue_family_properties.size(); queue_family_prop_idx++) {
-            VkBool32 present_support = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queue_family_prop_idx,
-                                                 windowSurface, &present_support);
+             queue_family_prop_idx < queue_family_properties.size(); queue_family_prop_idx++)
+        {
+            vk::Bool32 present_support = VK_FALSE;
+
+            vk::Result result = physical_device_.getSurfaceSupportKHR(
+                queue_family_prop_idx, window_surface_, &present_support);
+            if (result != vk::Result::eSuccess)
+                return AppError::unexpected(
+                    {"Failed to get physical device surface support", result});
 
             if ((queue_family_properties[queue_family_prop_idx].queueFlags &
-                 VK_QUEUE_GRAPHICS_BIT) &&
-                present_support) {
-                queue_idx = queue_family_prop_idx;
+                 vk::QueueFlagBits::eGraphics) &&
+                present_support)
+            {
+                queue_family_idx_ = queue_family_prop_idx;
                 break;
             }
         }
 
-        if (queue_idx == UINT32_MAX) {
-            return std::unexpected(ErrorKind::NoSuitableQueueFamily);
+        if (queue_family_idx_ == UINT32_MAX)
+        {
+            return AppError::unexpected(
+                {"Couldnt find suitable queue family", ErrorKind::NoSuitableQueueFamily});
         }
 
         // getting features
-        VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extended_dynamic_state_features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
-            .extendedDynamicState = VK_TRUE,
+        vk::StructureChain feature_chain = {
+            vk::PhysicalDeviceFeatures2{
+                .features = {.samplerAnisotropy = vk::True},
+            },
+            vk::PhysicalDeviceVulkan11Features{
+                .shaderDrawParameters = vk::True,
+            },
+            vk::PhysicalDeviceVulkan13Features{
+                .synchronization2 = vk::True,
+                .dynamicRendering = vk::True,
+            },
+            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT{
+                .extendedDynamicState = vk::True,
+            },
         };
 
-        VkPhysicalDeviceVulkan13Features vulkan_13_features{
-            .sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-            .pNext            = &extended_dynamic_state_features,
-            .synchronization2 = VK_TRUE,
-            .dynamicRendering = VK_TRUE,
-        };
+        float queue_priority = 0.5f; // priority for scheduling of command buffer
+                                     // execution, needed even if there is one queue
+        vk::DeviceQueueCreateInfo device_queue_create_info{.queueFamilyIndex = queue_family_idx_,
+                                                           .queueCount       = 1,
+                                                           .pQueuePriorities = &queue_priority};
 
-        VkPhysicalDeviceVulkan11Features vulkan_11_features{
-            .sType                = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-            .pNext                = &vulkan_13_features,
-            .shaderDrawParameters = VK_TRUE,
-        };
-
-        VkPhysicalDeviceFeatures2 features2{
-            .sType    = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-            .pNext    = &vulkan_11_features,
-            .features = {.samplerAnisotropy = VK_TRUE},
-        };
-
-        float queuePriority = 0.5f; // priority for scheduling of command buffer
-                                    // execution, needed even if there is one queue
-        VkDeviceQueueCreateInfo device_queue_create_info{
-            .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex = queue_idx,
-            .queueCount       = 1,
-            .pQueuePriorities = &queuePriority};
-
-        VkDeviceCreateInfo deviceCreateInfo{
-            .sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .pNext                   = &features2, // connecting the chain of
-                                                   // features to vulkan
+        vk::DeviceCreateInfo device_create_info{
+            .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(), // connecting the chain of
+                                                                        // features to vulkan
             .queueCreateInfoCount    = 1,
             .pQueueCreateInfos       = &device_queue_create_info,
-            .enabledExtensionCount   = static_cast<uint32_t>(required_device_extensions.size()),
-            .ppEnabledExtensionNames = required_device_extensions.data()};
+            .enabledExtensionCount   = static_cast<uint32_t>(required_device_extensions_.size()),
+            .ppEnabledExtensionNames = required_device_extensions_.data()};
 
-        VkResult result =
-            vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &logicalDevice);
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(AppError{result});
+        vk::Result result =
+            physical_device_.createDevice(&device_create_info, nullptr, &logical_device_);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected({"Failed to create logical device", result});
         }
 
-        vkGetDeviceQueue(logicalDevice, queue_idx, 0, &queue);
+        queue_ = logical_device_.getQueue(queue_family_idx_, 0);
 
         return {};
     }
 
-    VkSurfaceFormatKHR
-    chooseSwapchainSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats)
+    vk::SurfaceFormatKHR
+    chooseSwapchainSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const &available_formats)
     {
-        assert(!availableFormats.empty());
+        assert(!available_formats.empty());
 
-        VkSurfaceFormatKHR surface_format = availableFormats[0];
+        vk::SurfaceFormatKHR surface_format = available_formats[0];
 
         bool found = false;
-        for (auto const &format : availableFormats) {
-            found = format.format == VK_FORMAT_B8G8R8A8_SRGB &&
-                    format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-            if (found) {
+        for (auto const &format : available_formats)
+        {
+            found = format.format == vk::Format::eB8G8R8A8Srgb &&
+                    format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+            if (found)
+            {
                 surface_format = format;
                 break;
             }
@@ -768,8 +797,8 @@ class App
         return surface_format;
     }
 
-    VkPresentModeKHR
-    chooseSwapchainPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes)
+    vk::PresentModeKHR
+    chooseSwapchainPresentMode(std::vector<vk::PresentModeKHR> const &available_present_modes)
     {
         // fifo present mode - stores rendered images in a queue, takes an image
         // from the front of the queue to display every time the display
@@ -779,12 +808,15 @@ class App
 
         bool found_fifo    = false;
         bool found_mailbox = false;
-        for (VkPresentModeKHR present_mode : availablePresentModes) {
-            if (present_mode == VK_PRESENT_MODE_FIFO_KHR) {
+        for (vk::PresentModeKHR present_mode : available_present_modes)
+        {
+            if (present_mode == vk::PresentModeKHR::eFifo)
+            {
                 found_fifo = true;
                 break;
             }
-            if (present_mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+            if (present_mode == vk::PresentModeKHR::eMailbox)
+            {
                 found_mailbox = true;
                 break;
             }
@@ -794,349 +826,354 @@ class App
 
         // if mailbox present mode is available, use it, otherwise FIFO present
         // mode
-        return found_mailbox ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
+        return found_mailbox ? vk::PresentModeKHR::eMailbox : vk::PresentModeKHR::eFifo;
     }
 
-    VkExtent2D chooseSwapchainExtent(const VkSurfaceCapabilitiesKHR &surfaceCapabilities)
+    [[nodiscard]]
+    Result<vk::Extent2D>
+    chooseSwapchainExtent(vk::SurfaceCapabilitiesKHR const &surface_capabilities)
     {
         // extent is the resolution of the images in the swapchain
 
-        if (surfaceCapabilities.currentExtent.width != UINT32_MAX) {
-            return surfaceCapabilities.currentExtent;
+        if (surface_capabilities.currentExtent.width != UINT32_MAX)
+        {
+            return surface_capabilities.currentExtent;
         }
 
         int width, height;
-        SDL_GetWindowSizeInPixels(window->getSDLWindow(), &width, &height);
+        bool success = SDL_GetWindowSizeInPixels(window_->getSDLWindow(), &width, &height);
+        if (!success)
+            return AppError::unexpected(
+                {"SDL_GetWindowSizeInPixels failed" + std::string(SDL_GetError()),
+                 ErrorKind::SDLFailure});
 
-        return VkExtent2D{std::clamp<uint32_t>(width, surfaceCapabilities.minImageExtent.width,
-                                               surfaceCapabilities.maxImageExtent.width),
-                          std::clamp<uint32_t>(height, surfaceCapabilities.minImageExtent.height,
-                                               surfaceCapabilities.maxImageExtent.height)};
+        return vk::Extent2D{std::clamp<uint32_t>(width, surface_capabilities.minImageExtent.width,
+                                                 surface_capabilities.maxImageExtent.width),
+                            std::clamp<uint32_t>(height, surface_capabilities.minImageExtent.height,
+                                                 surface_capabilities.maxImageExtent.height)};
     }
 
-    uint32_t chooseSwapchainMinImageCount(const VkSurfaceCapabilitiesKHR &surfaceCapabilities)
+    uint32_t chooseSwapchainMinImageCount(vk::SurfaceCapabilitiesKHR const &surface_capabilities)
     {
-        uint32_t minImgCount = std::max(uint32_t(3), surfaceCapabilities.minImageCount);
+        uint32_t min_img_count = std::max(uint32_t(3), surface_capabilities.minImageCount);
 
-        if ((0 < surfaceCapabilities.maxImageCount) &&
-            (surfaceCapabilities.maxImageCount < minImgCount)) {
-            minImgCount = surfaceCapabilities.maxImageCount;
+        if ((0 < surface_capabilities.maxImageCount) &&
+            (surface_capabilities.maxImageCount < min_img_count))
+        {
+            min_img_count = surface_capabilities.maxImageCount;
         }
 
-        return minImgCount;
+        return min_img_count;
     }
 
     void cleanupSwapchain()
     {
-        swapchainImageViews.clear();
-        swapchain = nullptr;
+        swapchain_image_views_.clear();
+        swapchain_ = nullptr;
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> recreateSwapchain()
+    Result<void> recreateSwapchain()
     {
-        int width  = 0;
-        int height = 0;
-        SDL_GetWindowSizeInPixels(window->getSDLWindow(), &width, &height);
-        while (width == 0 || height == 0) {
-            SDL_GetWindowSizeInPixels(window->getSDLWindow(), &width, &height);
-            SDL_WaitEvent(&window->getCurrentEvent());
+        int width    = 0;
+        int height   = 0;
+        bool success = SDL_GetWindowSizeInPixels(window_->getSDLWindow(), &width, &height);
+        if (!success)
+            return AppError::unexpected(
+                {"SDL_GetWindowSizeInPixels failed" + std::string(SDL_GetError()),
+                 ErrorKind::SDLFailure});
+
+        while (width == 0 || height == 0)
+        {
+            success = SDL_GetWindowSizeInPixels(window_->getSDLWindow(), &width, &height);
+            if (!success)
+                return AppError::unexpected(
+                    {"SDL_GetWindowSizeInPixels failed" + std::string(SDL_GetError()),
+                     ErrorKind::SDLFailure});
+
+            success = SDL_WaitEvent(&window_->getCurrentEvent());
+            if (!success)
+                return AppError::unexpected(
+                    {"SDL_WaitEvent failed" + std::string(SDL_GetError()), ErrorKind::SDLFailure});
         }
 
-        vkDeviceWaitIdle(logicalDevice);
+        vk::Result result = logical_device_.waitIdle();
+        if (result != vk::Result::eSuccess)
+            return AppError::unexpected({"Logical device wait idle failed", result});
 
-        swapchainImageViews.clear();
-        // cleanupSwapchain();
+        swapchain_image_views_.clear();
+        cleanupSwapchain();
 
         auto expected = createSwapchain();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = createImageViews();
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createSwapchain()
+    Result<void> createSwapchain()
     {
-        VkSurfaceCapabilitiesKHR surface_capabilities;
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, windowSurface,
-                                                  &surface_capabilities);
-        swapchainExtent        = chooseSwapchainExtent(surface_capabilities);
-        uint32_t minImageCount = chooseSwapchainMinImageCount(surface_capabilities);
+        vk::SurfaceCapabilitiesKHR surface_capabilities;
+        vk::Result result =
+            physical_device_.getSurfaceCapabilitiesKHR(window_surface_, &surface_capabilities);
+        if (result != vk::Result::eSuccess)
+            return AppError::unexpected(
+                {"Failed to get physical device surface capabilites", result});
 
-        uint32_t available_formats_count = 0;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, windowSurface,
-                                             &available_formats_count, nullptr);
-        std::vector<VkSurfaceFormatKHR> available_formats(available_formats_count);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, windowSurface,
-                                             &available_formats_count, available_formats.data());
+        auto extent = chooseSwapchainExtent(surface_capabilities);
+        if (!extent)
+            return AppError::unexpected(extent.error());
+        swapchain_extent_ = extent.value();
 
-        swapchainSurfaceFormat = chooseSwapchainSurfaceFormat(available_formats);
+        uint32_t min_img_count = chooseSwapchainMinImageCount(surface_capabilities);
 
-        uint32_t available_present_modes_count = 0;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, windowSurface,
-                                                  &available_formats_count, nullptr);
-        std::vector<VkPresentModeKHR> available_present_modes(available_present_modes_count);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, windowSurface,
-                                                  &available_formats_count,
-                                                  available_present_modes.data());
+        auto available_formats = physical_device_.getSurfaceFormatsKHR();
+        if (available_formats.result != vk::Result::eSuccess)
+            return AppError::unexpected(
+                {"Failed to get physical device surface formats", available_formats.result});
 
-        VkPresentModeKHR presentMode = chooseSwapchainPresentMode(available_present_modes);
+        swapchain_surface_format_ = chooseSwapchainSurfaceFormat(available_formats.value);
 
-        VkSwapchainCreateInfoKHR swapchainCreateInfo{
-            .sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-            .surface          = windowSurface,
-            .minImageCount    = minImageCount,
-            .imageFormat      = swapchainSurfaceFormat.format,
-            .imageColorSpace  = swapchainSurfaceFormat.colorSpace,
-            .imageExtent      = swapchainExtent,
+        auto available_present_modes = physical_device_.getSurfacePresentModesKHR();
+        if (available_present_modes.result != vk::Result::eSuccess)
+            return AppError::unexpected({"Failed to get physical device surface present modes",
+                                         available_present_modes.result});
+
+        vk::PresentModeKHR present_mode = chooseSwapchainPresentMode(available_present_modes.value);
+
+        vk::SwapchainCreateInfoKHR swapchain_create_info{
+            .surface          = window_surface_,
+            .minImageCount    = min_img_count,
+            .imageFormat      = swapchain_surface_format_.format,
+            .imageColorSpace  = swapchain_surface_format_.colorSpace,
+            .imageExtent      = swapchain_extent_,
             .imageArrayLayers = 1,
-            .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-            .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
+            .imageSharingMode = vk::SharingMode::eExclusive,
             .preTransform     = surface_capabilities.currentTransform,
-            .compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-            .presentMode      = presentMode,
+            .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+            .presentMode      = present_mode,
             .clipped          = true,
-            .oldSwapchain     = swapchain,
+            .oldSwapchain     = swapchain_,
         };
 
-        VkResult result =
-            vkCreateSwapchainKHR(logicalDevice, &swapchainCreateInfo, nullptr, &swapchain);
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
-        }
+        result = logical_device_.createSwapchainKHR(&swapchain_create_info, nullptr, &swapchain_);
+        if (result != vk::Result::eSuccess)
+            return AppError::unexpected({"Failed to create swapchain", result});
 
-        uint32_t swapchain_image_count = 0;
-        vkGetSwapchainImagesKHR(logicalDevice, swapchain, &swapchain_image_count, nullptr);
-        swapchainImages.resize(swapchain_image_count);
-        vkGetSwapchainImagesKHR(logicalDevice, swapchain, &swapchain_image_count,
-                                swapchainImages.data());
+        auto swapchain_imgs = logical_device_.getSwapchainImagesKHR(swapchain_);
+        if (swapchain_imgs.result != vk::Result::eSuccess)
+            return AppError::unexpected({"Failed to get swapchain images", swapchain_imgs.result});
+
+        swapchain_images_.assign(swapchain_imgs.value.begin(), swapchain_imgs.value.end());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<VkImageView, AppError> createImageView(VkImage &image, VkFormat format)
+    Result<vk::ImageView> createImageView(vk::Image &image, vk::Format format)
     {
-        VkImageViewCreateInfo viewInfo{
-            .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        vk::ImageViewCreateInfo view_info{
             .image            = image,
-            .viewType         = VK_IMAGE_VIEW_TYPE_2D,
+            .viewType         = vk::ImageViewType::e2D,
             .format           = format,
-            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
 
-        VkImageView image_view;
-        VkResult result = vkCreateImageView(logicalDevice, &viewInfo, nullptr, &image_view);
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        vk::ImageView image_view;
+        vk::Result result = logical_device_.createImageView(&view_info, nullptr, &image_view);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected({"Failed to create image view", result});
         }
 
         return image_view;
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createImageViews()
+    Result<void> createImageViews()
     {
-        assert(swapchainImageViews.empty());
+        assert(swapchain_image_views_.empty());
 
-        VkImageViewCreateInfo imageViewCreateInfo{
-            .viewType         = VK_IMAGE_VIEW_TYPE_2D,
-            .format           = swapchainSurfaceFormat.format,
-            .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1}};
+        swapchain_image_views_.resize(swapchain_images_.size());
+        for (uint32_t i = 0; i < swapchain_images_.size(); i++)
+        {
+            auto image_view =
+                createImageView(swapchain_images_[i], swapchain_surface_format_.format);
 
-        swapchainImageViews.resize(swapchainImages.size());
-        for (uint32_t i = 0; i < swapchainImages.size(); i++) {
-            imageViewCreateInfo.image = swapchainImages[i];
-
-            VkResult result = vkCreateImageView(logicalDevice, &imageViewCreateInfo, nullptr,
-                                                &swapchainImageViews[i]);
-
-            if (result != vk::Result::eSuccess) {
-                return std::unexpected(result);
+            if (!image_view)
+            {
+                return AppError::unexpected(image_view.error());
             }
+
+            swapchain_image_views_[i] = image_view.value();
         }
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createDescriptorSetLayout()
+    Result<void> createDescriptorSetLayout()
     {
         std::array bindings = {
-            VkDescriptorSetLayoutBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                                         VK_SHADER_STAGE_VERTEX_BIT, nullptr),
-            VkDescriptorSetLayoutBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
-                                         VK_SHADER_STAGE_FRAGMENT_BIT, nullptr),
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1,
+                                           vk::ShaderStageFlagBits::eVertex, nullptr),
+            vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1,
+                                           vk::ShaderStageFlagBits::eFragment, nullptr),
         };
 
-        VkDescriptorSetLayoutCreateInfo layoutInfo{
-            .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        vk::DescriptorSetLayoutCreateInfo layout_info{
             .bindingCount = bindings.size(),
             .pBindings    = bindings.data(),
         };
 
-        VkResult result =
-            vkCreateDescriptorSetLayout(logicalDevice, &layoutInfo, nullptr, &descriptorSetLayout);
+        vk::Result result = logical_device_.createDescriptorSetLayout(&layout_info, nullptr,
+                                                                      &descriptor_set_layout_);
 
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected({"Failed to create descriptor set layout", result});
         }
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createGraphicsPipeline()
+    Result<void> createGraphicsPipeline()
     {
         /* SHADER STAGE SETUP */
 
         auto shader_code = readFile(appPath() / "shaders/slang.spv");
-        if (!shader_code) {
-            return std::unexpected(shader_code.error());
+        if (!shader_code)
+        {
+            return AppError::unexpected(shader_code.error());
         }
 
         auto shader_module = createShaderModule(shader_code.value());
         if (!shader_module)
-            return std::unexpected(shader_module.error());
+            return AppError::unexpected(shader_module.error());
 
-        VkPipelineShaderStageCreateInfo vertShaderStageInfo{
-            .sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage               = VK_SHADER_STAGE_VERTEX_BIT,
+        vk::PipelineShaderStageCreateInfo vert_shader_stage_info{
+            .stage               = vk::ShaderStageFlagBits::eVertex,
             .module              = shader_module.value(),
             .pName               = "vertMain", // the entrypoint in the slang code
             .pSpecializationInfo = nullptr     // used to set constants in shader per-pipeline
         };
 
-        VkPipelineShaderStageCreateInfo fragShaderStageInfo{
-            .sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage  = VK_SHADER_STAGE_FRAGMENT_BIT,
+        vk::PipelineShaderStageCreateInfo frag_shader_stage_info{
+            .stage  = vk::ShaderStageFlagBits::eFragment,
             .module = shader_module.value(),
             .pName  = "fragMain"};
 
-        std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {vertShaderStageInfo,
-                                                                       fragShaderStageInfo};
+        std::array<vk::PipelineShaderStageCreateInfo, 2> shader_stages = {vert_shader_stage_info,
+                                                                          frag_shader_stage_info};
 
         /* INPUT STAGE SETUP */
 
         auto bindingDescription    = Vertex::getBindingDescription();
         auto attributeDescriptions = Vertex::getAttributeDescriptions();
-        VkPipelineVertexInputStateCreateInfo vertexInputInfo{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        vk::PipelineVertexInputStateCreateInfo vertex_input_info{
             .vertexBindingDescriptionCount   = 1,
             .pVertexBindingDescriptions      = &bindingDescription,
             .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
             .pVertexAttributeDescriptions    = attributeDescriptions.data()};
 
-        VkPipelineInputAssemblyStateCreateInfo inputAssembly{
-            .sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
+        vk::PipelineInputAssemblyStateCreateInfo input_assembly{
+            .topology = vk::PrimitiveTopology::eTriangleList};
 
-        VkPipelineViewportStateCreateInfo viewportState{
-            .sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-            .viewportCount = 1,
-            .scissorCount  = 1};
+        vk::PipelineViewportStateCreateInfo viewport_state{.viewportCount = 1, .scissorCount = 1};
 
-        std::array dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_VIEWPORT};
-        VkPipelineDynamicStateCreateInfo dynamicState{
-            .sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-            .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
-            .pDynamicStates    = dynamicStates.data()};
+        std::array dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+
+        vk::PipelineDynamicStateCreateInfo dynamic_state{
+            .dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
+            .pDynamicStates    = dynamic_states.data()};
 
         /* RASTERIZATION STAGE SETUP */
 
-        VkPipelineRasterizationStateCreateInfo rasterizer{
-            .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-            .depthClampEnable        = VK_FALSE, // if true, fragments past the near or far plane
-                                                 // will be clamped rather than discarded
-            .rasterizerDiscardEnable = VK_FALSE, // if true, skips rasterizer stage
-            .polygonMode             = VK_POLYGON_MODE_FILL,
-            .cullMode                = VK_CULL_MODE_BACK_BIT,
-            .frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-            .depthBiasEnable         = VK_FALSE, // if true, rasterizer can make
-                                                 // adjustments to depth values
+        vk::PipelineRasterizationStateCreateInfo rasterizer{
+            .depthClampEnable        = vk::False, // if true, fragments past the near or far plane
+                                                  // will be clamped rather than discarded
+            .rasterizerDiscardEnable = vk::False, // if true, skips rasterizer stage
+            .polygonMode             = vk::PolygonMode::eFill,
+            .cullMode                = vk::CullModeFlagBits::eBack,
+            .frontFace               = vk::FrontFace::eCounterClockwise,
+            .depthBiasEnable         = vk::False, // if true, rasterizer can make
+                                                  // adjustments to depth values
             .lineWidth               = 1.0f};
 
-        VkPipelineMultisampleStateCreateInfo multisampling{
-            .sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
-            .sampleShadingEnable  = VK_FALSE};
+        vk::PipelineMultisampleStateCreateInfo multisampling{
+            .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
 
         /* COLOR BLENDING STAGE SETUP */
 
         // linearly interpolated blending
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{
-            .blendEnable         = VK_TRUE,
-            .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-            .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-            .colorBlendOp        = VK_BLEND_OP_ADD,
-            .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-            .alphaBlendOp        = VK_BLEND_OP_ADD,
-            .colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                   VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+        vk::PipelineColorBlendAttachmentState color_blend_attachment{
+            .blendEnable         = vk::True,
+            .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+            .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+            .colorBlendOp        = vk::BlendOp::eAdd,
+            .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+            .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+            .alphaBlendOp        = vk::BlendOp::eAdd,
+            .colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                   vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
 
-        VkPipelineColorBlendStateCreateInfo colorBlending{
-            .sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-            .logicOpEnable   = VK_FALSE,
-            .logicOp         = VK_LOGIC_OP_COPY,
-            .attachmentCount = 1,
-            .pAttachments    = &colorBlendAttachment};
+        vk::PipelineColorBlendStateCreateInfo color_blending{.logicOpEnable   = vk::False,
+                                                             .logicOp         = vk::LogicOp::eCopy,
+                                                             .attachmentCount = 1,
+                                                             .pAttachments =
+                                                                 &color_blend_attachment};
 
         /* PIPELINE SETUP */
 
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo{
-            .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-            .setLayoutCount         = 1,
-            .pSetLayouts            = &descriptorSetLayout,
-            .pushConstantRangeCount = 0};
+        vk::PipelineLayoutCreateInfo pipelione_layout_info{.setLayoutCount = 1,
+                                                           .pSetLayouts = &descriptor_set_layout_,
+                                                           .pushConstantRangeCount = 0};
 
-        VkResult result =
-            vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+        vk::Result result = logical_device_.createPipelineLayout(&pipelione_layout_info, nullptr,
+                                                                 &pipeline_layout_);
 
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
-        }
+        if (result != vk::Result::eSuccess)
+            return AppError::unexpected({"Failed to create pipeline layout", result});
 
-        VkPipelineRenderingCreateInfo pipeline_rendering_create_info{
-            .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        vk::PipelineRenderingCreateInfo pipeline_rendering_create_info{
             .colorAttachmentCount    = 1,
-            .pColorAttachmentFormats = &swapchainSurfaceFormat.format};
+            .pColorAttachmentFormats = &swapchain_surface_format_.format};
 
-        VkGraphicsPipelineCreateInfo graphics_pipeline_create_info{
-            .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        vk::GraphicsPipelineCreateInfo graphics_pipeline_create_info{
             .pNext               = &pipeline_rendering_create_info,
             .stageCount          = 2,
-            .pStages             = shaderStages.data(),
-            .pVertexInputState   = &vertexInputInfo,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState      = &viewportState,
+            .pStages             = shader_stages.data(),
+            .pVertexInputState   = &vertex_input_info,
+            .pInputAssemblyState = &input_assembly,
+            .pViewportState      = &viewport_state,
             .pRasterizationState = &rasterizer,
             .pMultisampleState   = &multisampling,
-            .pColorBlendState    = &colorBlending,
-            .pDynamicState       = &dynamicState,
-            .layout              = pipelineLayout,
+            .pColorBlendState    = &color_blending,
+            .pDynamicState       = &dynamic_state,
+            .layout              = pipeline_layout_,
             .renderPass          = VK_NULL_HANDLE // using dynamic rendering
         };
 
-        result =
-            vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1,
-                                      &graphics_pipeline_create_info, nullptr, &graphicsPipeline);
+        result = logical_device_.createGraphicsPipelines(
+            VK_NULL_HANDLE, 1, &graphics_pipeline_create_info, nullptr, &graphics_pipeline_);
 
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected({"Failed to create graphics pipeline", result});
         }
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<VkShaderModule, AppError> createShaderModule(const std::vector<char> &code) const
+    Result<vk::ShaderModule> createShaderModule(const std::vector<char> &code) const
     {
         VkShaderModuleCreateInfo createInfo{.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
                                             .codeSize = code.size() * sizeof(char),
@@ -1146,15 +1183,16 @@ class App
         VkShaderModule shaderModule;
         VkResult result = vkCreateShaderModule(logicalDevice, &createInfo, nullptr, &shaderModule);
 
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected(result);
         }
 
         return shaderModule;
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createCommandPool()
+    Result<void> createCommandPool()
     {
         VkCommandPoolCreateInfo poolInfo{
             .sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -1164,18 +1202,18 @@ class App
 
         VkResult result = vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool);
 
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected(result);
         }
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createImage(uint32_t width, uint32_t height, VkFormat format,
-                                              VkImageTiling tiling, VkImageUsageFlags usage,
-                                              VkMemoryPropertyFlags properties, VkImage &image,
-                                              VkDeviceMemory &imageMemory)
+    Result<void> createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+                             VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+                             VkImage &image, VkDeviceMemory &imageMemory)
     {
         VkImageCreateInfo imageInfo{
             .sType       = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1191,8 +1229,9 @@ class App
         };
 
         VkResult result = vkCreateImage(logicalDevice, &imageInfo, nullptr, &image);
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected(result);
         }
 
         VkMemoryRequirements memRequirements;
@@ -1200,7 +1239,7 @@ class App
 
         auto memory_type_idx = findMemoryType(memRequirements.memoryTypeBits, properties);
         if (!memory_type_idx)
-            return std::unexpected(memory_type_idx.error());
+            return AppError::unexpected(memory_type_idx.error());
 
         VkMemoryAllocateInfo allocInfo{
             .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -1210,22 +1249,22 @@ class App
 
         result = vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &imageMemory);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         result = vkBindImageMemory(logicalDevice, image, imageMemory, 0);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError>
-    transitionImageLayout(const VkImage &image, VkImageLayout oldLayout, VkImageLayout newLayout)
+    Result<void> transitionImageLayout(const VkImage &image, VkImageLayout oldLayout,
+                                       VkImageLayout newLayout)
     {
         auto commandBuffer = beginOneTimeCommandBuffer();
         if (!commandBuffer)
-            return std::unexpected(commandBuffer.error());
+            return AppError::unexpected(commandBuffer.error());
 
         VkImageMemoryBarrier barrier{
             .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1239,21 +1278,26 @@ class App
         VkPipelineStageFlags dstStage;
 
         if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
-            newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+        {
             barrier.srcAccessMask = {};
             barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
             srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
             dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
-                   newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        }
+        else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+                 newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
             barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
             srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
             dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        } else {
-            return std::unexpected(ErrorKind::TransitionNotSupported);
+        }
+        else
+        {
+            return AppError::unexpected(ErrorKind::TransitionNotSupported);
         }
 
         vkCmdPipelineBarrier(commandBuffer.value(), srcStage, dstStage, {}, {}, nullptr, 0, nullptr,
@@ -1262,13 +1306,13 @@ class App
         auto expected = endOneTimeCommandBuffer(commandBuffer.value());
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createTextureImage()
+    Result<void> createTextureImage()
     {
         int texWidth, texHeight, texChannels;
         stbi_uc *pixels = stbi_load((appPath() / "textures/dirt.png").c_str(), &texWidth,
@@ -1276,8 +1320,9 @@ class App
 
         VkDeviceSize imageSize = texWidth * texHeight * 4;
 
-        if (!pixels) {
-            return std::unexpected(ErrorKind::FailedToLoadImage);
+        if (!pixels)
+        {
+            return AppError::unexpected(ErrorKind::FailedToLoadImage);
         }
 
         VkBuffer stagingBuffer             = nullptr;
@@ -1289,12 +1334,13 @@ class App
                          stagingBuffer, stagingBufferMemory);
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         void *data;
         VkResult result = vkMapMemory(logicalDevice, stagingBufferMemory, 0, imageSize, 0, &data);
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected(result);
         }
 
         memcpy(data, pixels, imageSize);
@@ -1308,33 +1354,35 @@ class App
                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
-        if (!expected) {
-            return std::unexpected(expected.error());
+        if (!expected)
+        {
+            return AppError::unexpected(expected.error());
         }
 
         expected = transitionImageLayout(textureImage, VK_IMAGE_LAYOUT_UNDEFINED,
                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = transitionImageLayout(textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createTextureImageView()
+    Result<void> createTextureImageView()
     {
         auto expected = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
-        if (!expected) {
-            return std::unexpected(expected.error());
+        if (!expected)
+        {
+            return AppError::unexpected(expected.error());
         }
 
         textureImageView = expected.value();
@@ -1343,7 +1391,7 @@ class App
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createTextureSampler()
+    Result<void> createTextureSampler()
     {
         VkPhysicalDeviceProperties properties;
         vkGetPhysicalDeviceProperties(physicalDevice, &properties);
@@ -1368,20 +1416,21 @@ class App
         };
 
         VkResult result = vkCreateSampler(logicalDevice, &samplerInfo, nullptr, &textureSampler);
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected(result);
         }
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> copyBufferToImage(const VkBuffer &buffer, VkImage &image,
-                                                    uint32_t width, uint32_t height)
+    Result<void> copyBufferToImage(const VkBuffer &buffer, VkImage &image, uint32_t width,
+                                   uint32_t height)
     {
         auto commandBuffer = beginOneTimeCommandBuffer();
         if (!commandBuffer)
-            return std::unexpected(commandBuffer.error());
+            return AppError::unexpected(commandBuffer.error());
 
         VkBufferImageCopy region{
             .bufferOffset      = 0,
@@ -1397,32 +1446,33 @@ class App
 
         auto expected = endOneTimeCommandBuffer(commandBuffer.value());
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<uint32_t, AppError> findMemoryType(uint32_t typeFilter,
-                                                     VkMemoryPropertyFlags properties)
+    Result<uint32_t> findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
     {
         VkPhysicalDeviceMemoryProperties memProperties;
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
 
-        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+        {
             if ((typeFilter & (1 << i)) &&
-                (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            {
                 return i;
             }
         }
 
-        return std::unexpected(ErrorKind::NoSuitableMemoryType);
+        return AppError::unexpected(ErrorKind::NoSuitableMemoryType);
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
-                                               VkMemoryPropertyFlags properties, VkBuffer &buffer,
-                                               VkDeviceMemory &bufferMemory)
+    Result<void> createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                              VkMemoryPropertyFlags properties, VkBuffer &buffer,
+                              VkDeviceMemory &bufferMemory)
     {
         VkBufferCreateInfo bufferInfo{
             .sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1433,14 +1483,14 @@ class App
 
         VkResult result = vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &buffer);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         VkMemoryRequirements memRequirements;
         vkGetBufferMemoryRequirements(logicalDevice, buffer, &memRequirements);
 
         auto memory_type_idx = findMemoryType(memRequirements.memoryTypeBits, properties);
         if (!memory_type_idx)
-            return std::unexpected(memory_type_idx.error());
+            return AppError::unexpected(memory_type_idx.error());
 
         VkMemoryAllocateInfo memoryAllocateInfo{
             .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -1451,17 +1501,17 @@ class App
         result = vkAllocateMemory(logicalDevice, &memoryAllocateInfo, nullptr, &bufferMemory);
 
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         result = vkBindBufferMemory(logicalDevice, buffer, bufferMemory, 0);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<VkCommandBuffer, AppError> beginOneTimeCommandBuffer()
+    Result<vk::CommandBuffer> beginOneTimeCommandBuffer()
     {
         VkCommandBufferAllocateInfo allocInfo{
             .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1474,7 +1524,7 @@ class App
         VkResult result = vkAllocateCommandBuffers(logicalDevice, &allocInfo, &commandBuffer);
 
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         VkCommandBufferBeginInfo beginInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1483,17 +1533,17 @@ class App
 
         result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         return commandBuffer;
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> endOneTimeCommandBuffer(VkCommandBuffer &commandBuffer)
+    Result<void> endOneTimeCommandBuffer(VkCommandBuffer &commandBuffer)
     {
         VkResult result = vkEndCommandBuffer(commandBuffer);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         VkSubmitInfo submitInfo{
             .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1503,35 +1553,34 @@ class App
 
         result = vkQueueSubmit(queue, 1, &submitInfo, nullptr);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         result = vkQueueWaitIdle(queue);
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> copyBuffer(VkBuffer &srcBuffer, VkBuffer &dstBuffer,
-                                             VkDeviceSize size)
+    Result<void> copyBuffer(VkBuffer &srcBuffer, VkBuffer &dstBuffer, VkDeviceSize size)
     {
         auto commandCopyBuffer = beginOneTimeCommandBuffer();
         if (!commandCopyBuffer)
-            return std::unexpected(commandCopyBuffer.error());
+            return AppError::unexpected(commandCopyBuffer.error());
 
         VkBufferCopy buffer_copy_region = {0, 0, size};
         vkCmdCopyBuffer(commandCopyBuffer.value(), srcBuffer, dstBuffer, 1, &buffer_copy_region);
 
         auto expected = endOneTimeCommandBuffer(commandCopyBuffer.value());
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createVertexBuffer()
+    Result<void> createVertexBuffer()
     {
         VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
@@ -1546,14 +1595,14 @@ class App
                          stagingBuffer, stagingBufferMemory);
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         void *dataStaging;
         VkResult result =
             vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &dataStaging);
 
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         memcpy(dataStaging, vertices.data(), bufferSize);
 
@@ -1565,18 +1614,18 @@ class App
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createIndexBuffer()
+    Result<void> createIndexBuffer()
     {
         VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
@@ -1591,14 +1640,15 @@ class App
                          stagingBuffer, stagingBufferMemory);
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         void *dataStaging;
         VkResult result =
             vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &dataStaging);
 
-        if (result != vk::Result::eSuccess) {
-            return std::unexpected(result);
+        if (result != vk::Result::eSuccess)
+        {
+            return AppError::unexpected(result);
         }
 
         memcpy(dataStaging, indices.data(), bufferSize);
@@ -1611,24 +1661,25 @@ class App
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         expected = copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 
         if (!expected)
-            return std::unexpected(expected.error());
+            return AppError::unexpected(expected.error());
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createUniformBuffers()
+    Result<void> createUniformBuffers()
     {
         uniformBuffers.clear();
         uniformBuffersMemory.clear();
         uniformBuffersMapped.clear();
 
-        for (int i = 0; i < maxFramesInFlight; i++) {
+        for (int i = 0; i < maxFramesInFlight; i++)
+        {
             VkDeviceSize bufferSize  = sizeof(UniformBufferObject);
             VkBuffer buffer          = nullptr;
             VkDeviceMemory bufferMem = nullptr;
@@ -1639,7 +1690,7 @@ class App
                                          buffer, bufferMem);
 
             if (!expected)
-                return std::unexpected(expected.error());
+                return AppError::unexpected(expected.error());
 
             vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, nullptr);
 
@@ -1653,7 +1704,7 @@ class App
     }
 
     [[nodiscard]]
-    std::expected<void, VkResult> createDescriptorPool()
+    Result<void> createDescriptorPool()
     {
         std::array poolSize{
             VkDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxFramesInFlight),
@@ -1672,13 +1723,13 @@ class App
             vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool);
 
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createDescriptorSets()
+    Result<void> createDescriptorSets()
     {
         std::vector<VkDescriptorSetLayout> layouts(maxFramesInFlight, descriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{
@@ -1694,9 +1745,10 @@ class App
             vkAllocateDescriptorSets(logicalDevice, &allocInfo, descriptorSets.data());
 
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
-        for (int i = 0; i < maxFramesInFlight; i++) {
+        for (int i = 0; i < maxFramesInFlight; i++)
+        {
             VkDescriptorBufferInfo bufferInfo{
                 .buffer = uniformBuffers[i], .offset = 0, .range = sizeof(UniformBufferObject)};
 
@@ -1733,7 +1785,7 @@ class App
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createCommandBuffers()
+    Result<void> createCommandBuffers()
     {
         VkCommandBufferAllocateInfo allocInfo{
             .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1746,19 +1798,19 @@ class App
             vkAllocateCommandBuffers(logicalDevice, &allocInfo, commandBuffers.data());
 
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         return {};
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> recordCommandBuffer(uint32_t image_idx)
+    Result<void> recordCommandBuffer(uint32_t image_idx)
     {
         VkCommandBuffer &commandBuffer = commandBuffers[frame_idx];
 
         VkResult result = vkBeginCommandBuffer(commandBuffer, {});
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         // changing image layout from undefined to color attachment optimal
         transitionImageLayout(
@@ -1821,7 +1873,7 @@ class App
         result = vkEndCommandBuffer(commandBuffer);
 
         if (result != vk::Result::eSuccess)
-            return std::unexpected(result);
+            return AppError::unexpected(result);
 
         return {};
     }
@@ -1860,31 +1912,33 @@ class App
     }
 
     [[nodiscard]]
-    std::expected<void, AppError> createSyncObjects()
+    Result<void> createSyncObjects()
     {
         assert(presentCompleteSphrs.empty() && renderFinishedSphrs.empty() && drawFences.empty());
 
-        for (int i = 0; i < swapchainImages.size(); i++) {
+        for (int i = 0; i < swapchainImages.size(); i++)
+        {
             VkResult result =
                 vkCreateSemaphore(logicalDevice, nullptr, nullptr, &renderFinishedSphrs[i]);
 
             if (result != vk::Result::eSuccess)
-                return std::unexpected(result);
+                return AppError::unexpected(result);
         }
 
-        for (int i = 0; i < maxFramesInFlight; i++) {
+        for (int i = 0; i < maxFramesInFlight; i++)
+        {
             VkResult result =
                 vkCreateSemaphore(logicalDevice, nullptr, nullptr, &presentCompleteSphrs[i]);
 
             if (result != vk::Result::eSuccess)
-                return std::unexpected(result);
+                return AppError::unexpected(result);
 
             VkFenceCreateInfo fence_create_info = {.flags = VK_FENCE_CREATE_SIGNALED_BIT};
 
             result = vkCreateFence(logicalDevice, &fence_create_info, nullptr, &drawFences[i]);
 
             if (result != vk::Result::eSuccess)
-                return std::unexpected(result);
+                return AppError::unexpected(result);
         }
 
         return {};

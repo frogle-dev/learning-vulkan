@@ -4,10 +4,11 @@
 
 #include "magic_enum.hpp"
 
-constexpr uint16_t width = 960;
+constexpr uint16_t width  = 960;
 constexpr uint16_t height = 960;
 
-int main() {
+int main()
+{
     auto window = Window::init(width, height);
     if (!window) {
         std::print(stderr, "Window init failed: {}\n", magic_enum::enum_name(window.error()));

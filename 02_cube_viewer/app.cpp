@@ -1,6 +1,7 @@
 #include "app.hpp"
 
-std::expected<App, AppError> App::init(Window &window) {
+std::expected<App, AppError> App::init(Window &window)
+{
     App app;
 
     app.window  = &window;
@@ -14,7 +15,8 @@ std::expected<App, AppError> App::init(Window &window) {
     return app;
 }
 
-std::expected<void, AppError> App::deinit() {
+std::expected<void, AppError> App::deinit()
+{
     cleanupSwapchain();
 
     VkResult result = vkDeviceWaitIdle(logicalDevice);
@@ -25,7 +27,8 @@ std::expected<void, AppError> App::deinit() {
     return {};
 }
 
-std::expected<void, AppError> App::pollEvents() {
+std::expected<void, AppError> App::pollEvents()
+{
     while (window->isEventReady()) {
         SDL_Event &event = window->getCurrentEvent();
         if (event.type == SDL_EVENT_QUIT)
