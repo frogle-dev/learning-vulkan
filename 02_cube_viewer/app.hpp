@@ -2,18 +2,16 @@
 
 #include <SDL3/SDL_vulkan.h>
 
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_core.h>
-
-#include <glm/ext/matrix_transform.hpp>
+#define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <vulkan/vulkan.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <assert.h>
+#include <vk_mem_alloc.h>
+
+#include "stb_image.h"
 
 #include <array>
+#include <assert.h>
 #include <chrono>
 #include <expected>
 #include <filesystem>
@@ -22,8 +20,6 @@
 #include <print>
 #include <source_location>
 #include <vector>
-
-#include "stb_image.h"
 
 #include "Window/window.hpp"
 
@@ -115,10 +111,10 @@ struct AppError {
 class App {
   public:
     [[nodiscard]] static std::expected<App, AppError> init(Window &window);
-    void deinit();
+    [[nodiscard]] std::expected<void, AppError> deinit();
 
     bool isRunning();
-    void pollEvents();
+    [[nodiscard]] std::expected<void, AppError> pollEvents();
     [[nodiscard]] std::expected<void, AppError> endFrame();
 
   private:
@@ -187,25 +183,86 @@ class App {
     [[nodiscard]]
     std::expected<void, AppError> initVulkan() {
         auto expected = createInstance();
-        setupDebugMessenger();
-        createWindowSurface();
-        pickPhysicalDevice();
-        createLogicalDevice();
-        createSwapchain();
-        createImageViews();
-        createDescriptorSetLayout();
-        createGraphicsPipeline();
-        createCommandPool();
-        createTextureImage();
-        createTextureImageView();
-        createTextureSampler();
-        createVertexBuffer();
-        createIndexBuffer();
-        createUniformBuffers();
-        createDescriptorPool();
-        createDescriptorSets();
-        createCommandBuffers();
-        createSyncObjects();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = setupDebugMessenger();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createWindowSurface();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = pickPhysicalDevice();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createLogicalDevice();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createSwapchain();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createImageViews();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createDescriptorSetLayout();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createGraphicsPipeline();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createCommandPool();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createTextureImage();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createTextureImageView();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createTextureSampler();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createVertexBuffer();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createIndexBuffer();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createUniformBuffers();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createDescriptorPool();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createDescriptorSets();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createCommandBuffers();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = createSyncObjects();
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        return {};
     }
 
     [[nodiscard]]
@@ -222,7 +279,10 @@ class App {
                                   presentCompleteSphrs[frame_idx], nullptr, &image_idx);
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-            recreateSwapchain();
+            auto expected = recreateSwapchain();
+            if (!expected)
+                return std::unexpected(expected.error());
+
             return std::unexpected(result);
         }
         if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
@@ -242,7 +302,9 @@ class App {
         if (result != VK_SUCCESS)
             return std::unexpected(result);
 
-        recordCommandBuffer(image_idx);
+        auto expected = recordCommandBuffer(image_idx);
+        if (!expected)
+            return std::unexpected(expected.error());
 
         VkPipelineStageFlags waitDestinationStageMask(
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
@@ -274,7 +336,9 @@ class App {
         result = vkQueuePresentKHR(queue, &presentInfoKHR);
         assert(result == VK_SUCCESS);
         if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
-            recreateSwapchain();
+            auto expected = recreateSwapchain();
+            if (!expected)
+                return std::unexpected(expected.error());
         }
 
         frame_idx = (frame_idx + 1) % maxFramesInFlight;
@@ -1230,11 +1294,20 @@ class App {
             return std::unexpected(expected.error());
         }
 
-        transitionImageLayout(textureImage, VK_IMAGE_LAYOUT_UNDEFINED,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
-        transitionImageLayout(textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        expected = transitionImageLayout(textureImage, VK_IMAGE_LAYOUT_UNDEFINED,
+                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected = copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
+        if (!expected)
+            return std::unexpected(expected.error());
+
+        expected =
+            transitionImageLayout(textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (!expected)
+            return std::unexpected(expected.error());
 
         return {};
     }
@@ -1307,6 +1380,8 @@ class App {
         auto expected = endOneTimeCommandBuffer(commandBuffer.value());
         if (!expected)
             return std::unexpected(expected.error());
+
+        return {};
     }
 
     [[nodiscard]]
@@ -1654,6 +1729,8 @@ class App {
 
         if (result != VK_SUCCESS)
             return std::unexpected(result);
+
+        return {};
     }
 
     [[nodiscard]]
@@ -1671,7 +1748,7 @@ class App {
                               VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                               VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
 
-        VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0};
+        VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0}}};
 
         VkRenderingAttachmentInfo attachmentInfo = {
             .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
