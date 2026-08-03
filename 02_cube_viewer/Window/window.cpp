@@ -1,23 +1,28 @@
 #include "window.hpp"
 
-std::expected<Window, WindowError> Window::init(uint16_t start_width, uint16_t start_height)
+std::expected<Window, WindowError> Window::init(uint16_t start_width,
+                                                uint16_t start_height)
 {
     Window win;
 
     win.width  = start_width;
     win.height = start_height;
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO))
+    {
         return std::unexpected(WindowError::SdlInitFailed);
     }
 
-    if (!SDL_SetHint(SDL_HINT_APP_ID, "HelloVulkan")) {
+    if (!SDL_SetHint(SDL_HINT_APP_ID, "HelloVulkan"))
+    {
         return std::unexpected(WindowError::SdlSetHintFailed);
     }
 
-    win.window = SDL_CreateWindow("HelloVulkan", win.width, win.height, SDL_WINDOW_RESIZABLE);
+    win.window =
+        SDL_CreateWindow("HelloVulkan", win.width, win.height, SDL_WINDOW_RESIZABLE);
 
-    if (win.window == nullptr) {
+    if (win.window == nullptr)
+    {
         return std::unexpected(WindowError::SdlWindowCreationFailed);
     }
 

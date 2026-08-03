@@ -1,11 +1,12 @@
 #include "app.hpp"
 
-std::expected<App, AppError> App::init(Window &window)
+[[nodiscard]]
+Result<App> App::init(Window &window)
 {
     App app;
 
-    app.window  = &window;
-    app.running = true;
+    app.window_  = &window;
+    app.running_ = true;
 
     auto expected = app.initVulkan();
 
@@ -15,37 +16,38 @@ std::expected<App, AppError> App::init(Window &window)
     return app;
 }
 
-std::expected<void, AppError> App::deinit()
+[[nodiscard]]
+Result<void> App::deinit()
 {
     cleanupSwapchain();
 
-    VkResult result = vkDeviceWaitIdle(logicalDevice);
+    vk::Result result = logical_device_.waitIdle();
 
-    if (result != VK_SUCCESS)
-        return std::unexpected(result);
+    if (result != vk::Result::eSuccess)
+        return AppError::unexpected({"failed to logical device wait idle", result});
 
     return {};
 }
 
-std::expected<void, AppError> App::pollEvents()
+Result<void> App::pollEvents()
 {
-    while (window->isEventReady())
+    while (window_->isEventReady())
     {
-        SDL_Event &event = window->getCurrentEvent();
+        SDL_Event &event = window_->getCurrentEvent();
         if (event.type == SDL_EVENT_QUIT)
-            running = false;
+            running_ = false;
         if (event.type == SDL_EVENT_WINDOW_RESIZED)
         {
             auto expected = recreateSwapchain();
 
             if (!expected)
-                return std::unexpected(expected.error());
+                return AppError::unexpected(expected.error());
         }
     }
 
     return {};
 }
 
-bool App::isRunning() { return running; }
+bool App::isRunning() { return running_; }
 
 std::expected<void, AppError> App::endFrame() { return drawFrame(); }

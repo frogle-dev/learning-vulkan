@@ -10,6 +10,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include "Window/window.hpp"
+#include "magic_enum.hpp"
 #include "stb_image.h"
 
 #include <chrono>
@@ -112,6 +113,18 @@ struct AppError
     static std::unexpected<AppError> unexpected(AppError error)
     {
         return std::unexpected(std::move(error));
+    }
+
+    void log(std::string message)
+    {
+        spdlog::error(message);
+        spdlog::error(": at {}, {}, {}\n", location_.file_name(), location_.line(),
+                      location_.function_name());
+
+        spdlog::error("Kind: {}, vk::Result: {}", magic_enum::enum_name(kind_),
+                      vk::to_string(vk_result_.value()));
+
+        spdlog::error("Message: {}\n", message_);
     }
 
     ErrorKind kind_;
