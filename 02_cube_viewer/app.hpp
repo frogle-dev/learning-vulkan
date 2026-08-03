@@ -122,10 +122,10 @@ struct AppError
     void log(std::string message)
     {
         spdlog::error(message);
-        spdlog::error(": at {}, {}, {}\n", location_.file_name(), location_.line(),
-                      location_.function_name());
+        spdlog::error("File: {} | Line: {} | Func: {}", location_.file_name(),
+                      location_.line(), location_.function_name());
 
-        spdlog::error("Kind: {}, vk::Result: {}", magic_enum::enum_name(kind_),
+        spdlog::error("Kind: {} | vk::Result: {}", magic_enum::enum_name(kind_),
                       vk::to_string(vk_result_.value()));
 
         spdlog::error("Message: {}\n", message_);
@@ -216,9 +216,10 @@ class App
     {
         VkResult volk_result = volkInitialize();
         if (volk_result != VK_SUCCESS)
-        {
-            // return AppError::unexpected()
-        }
+            return AppError::unexpected(
+                {"Failed to initialize volk", vk::Result(volk_result)});
+
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
         auto expected = createInstance();
         if (!expected)

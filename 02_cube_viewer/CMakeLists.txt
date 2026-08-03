@@ -62,7 +62,12 @@ endfunction()
 
 add_executable(${PROJECT_NAME})
 
-target_sources(${PROJECT_NAME} PRIVATE main.cpp app.cpp Window/window.cpp stb_image.cpp vma.cpp)
+get_filename_component(VULKAN_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    BUILD_RPATH ${VULKAN_LIB_DIR}
+)
+
+target_sources(${PROJECT_NAME} PRIVATE main.cpp app.cpp Window/window.cpp stb_image.cpp vma.cpp volk.cpp)
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.hpp)
 
