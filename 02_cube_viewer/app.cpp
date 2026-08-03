@@ -29,11 +29,13 @@ std::expected<void, AppError> App::deinit()
 
 std::expected<void, AppError> App::pollEvents()
 {
-    while (window->isEventReady()) {
+    while (window->isEventReady())
+    {
         SDL_Event &event = window->getCurrentEvent();
         if (event.type == SDL_EVENT_QUIT)
             running = false;
-        if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+        if (event.type == SDL_EVENT_WINDOW_RESIZED)
+        {
             auto expected = recreateSwapchain();
 
             if (!expected)
