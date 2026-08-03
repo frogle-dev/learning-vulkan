@@ -1,5 +1,7 @@
 #include "app.hpp"
 
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+
 [[nodiscard]]
 Result<App> App::init(Window &window)
 {

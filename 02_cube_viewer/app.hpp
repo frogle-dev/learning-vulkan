@@ -1,7 +1,11 @@
 #pragma once
 
+#define VK_NO_PROTOTYPES
+#include <volk.h>
+
 #define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include "vulkan/vulkan.hpp"
 #include <vulkan/vulkan.hpp>
 
@@ -210,9 +214,18 @@ class App
     [[nodiscard]]
     Result<void> initVulkan()
     {
+        VkResult volk_result = volkInitialize();
+        if (volk_result != VK_SUCCESS)
+        {
+            // return AppError::unexpected()
+        }
+
         auto expected = createInstance();
         if (!expected)
             return AppError::unexpected(expected.error());
+
+        volkLoadInstance(static_cast<VkInstance>(instance_));
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(instance_);
 
         expected = setupDebugMessenger();
         if (!expected)
@@ -229,6 +242,9 @@ class App
         expected = createLogicalDevice();
         if (!expected)
             return AppError::unexpected(expected.error());
+
+        volkLoadDevice(static_cast<VkDevice>(logical_device_));
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(logical_device_);
 
         expected = createSwapchain();
         if (!expected)
@@ -614,26 +630,21 @@ class App
         return {};
     }
 
-    bool isDeviceSuitable(VkPhysicalDevice const &physicalDevice)
+    Result<bool> isDeviceSuitable(vk::PhysicalDevice const &physical_device)
     {
         // if supports vulkan 1.3
-        VkPhysicalDeviceProperties physical_device_properties;
-        vkGetPhysicalDeviceProperties(physicalDevice, &physical_device_properties);
+        vk::PhysicalDeviceProperties physical_device_properties;
+        physical_device.getProperties(&physical_device_properties);
         bool supports_vulkan1_3 =
             physical_device_properties.apiVersion >= VK_API_VERSION_1_3;
 
         // if supports graphics queue family
-        uint32_t queue_family_count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queue_family_count,
-                                                 nullptr);
-        std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queue_family_count,
-                                                 queue_families.data());
+        auto queue_families = physical_device.getQueueFamilyProperties();
 
         bool supports_graphics = false;
         for (auto const &queue_family : queue_families)
         {
-            if (queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            if (queue_family.queueFlags & vk::QueueFlagBits::eGraphics)
             {
                 supports_graphics = true;
                 break;
@@ -641,19 +652,20 @@ class App
         }
 
         // if supports specific extensions
-        uint32_t extension_count = 0;
-        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extension_count,
-                                             nullptr);
-        std::vector<VkExtensionProperties> available_device_extensions(extension_count);
-        vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extension_count,
-                                             available_device_extensions.data());
+        auto available_device_extensions =
+            physical_device.enumerateDeviceExtensionProperties();
+        if (available_device_extensions.result != vk::Result::eSuccess)
+            return AppError::unexpected(
+                {"Failed to enumerate device extension properties",
+                 available_device_extensions.result});
 
         // if any of the required device extensions aren't available -> false
         bool supports_all_required_extensions = true;
         for (char const *required_device_extension : required_device_extensions_)
         {
             bool found = true;
-            for (auto const &available_device_extension : available_device_extensions)
+            for (auto const &available_device_extension :
+                 available_device_extensions.value)
             {
                 if (strcmp(available_device_extension.extensionName,
                            required_device_extension) == 0)
@@ -670,32 +682,20 @@ class App
         }
 
         // if supports specific features
-        VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extended_dynamic_state_features{
-            .sType =
-                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
-        };
-
-        VkPhysicalDeviceVulkan13Features vulkan_13_features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-            .pNext = &extended_dynamic_state_features,
-        };
-
-        VkPhysicalDeviceVulkan11Features vulkan_11_features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-            .pNext = &vulkan_13_features,
-        };
-
-        VkPhysicalDeviceFeatures2 features_2{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-            .pNext = &vulkan_11_features,
-        };
-
-        vkGetPhysicalDeviceFeatures2(physicalDevice, &features_2);
+        auto features = physical_device.template getFeatures2<
+            vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+            vk::PhysicalDeviceVulkan13Features,
+            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
 
         bool supports_required_features =
-            vulkan_11_features.shaderDrawParameters &&
-            vulkan_13_features.synchronization2 && vulkan_13_features.dynamicRendering &&
-            extended_dynamic_state_features.extendedDynamicState;
+            features.template get<vk::PhysicalDeviceVulkan11Features>()
+                .shaderDrawParameters &&
+            features.template get<vk::PhysicalDeviceVulkan13Features>()
+                .synchronization2 &&
+            features.template get<vk::PhysicalDeviceVulkan13Features>()
+                .dynamicRendering &&
+            features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
+                .extendedDynamicState;
 
         return supports_vulkan1_3 && supports_graphics &&
                supports_all_required_extensions && supports_required_features;

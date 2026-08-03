@@ -15,6 +15,14 @@ find_package(glm REQUIRED)
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 
 FetchContent_Declare(
+    volk
+    GIT_REPOSITORY https://github.com/zeux/volk.git
+    GIT_TAG 1.4.350
+)
+set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(volk)
+
+FetchContent_Declare(
     VMA
     GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
     GIT_TAG v3.4.0
@@ -54,16 +62,17 @@ endfunction()
 
 add_executable(${PROJECT_NAME})
 
-target_sources(${PROJECT_NAME} PRIVATE main.cpp)
+target_sources(${PROJECT_NAME} PRIVATE main.cpp app.cpp Window/window.cpp stb_image.cpp vma.cpp)
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.hpp)
 
 target_link_libraries(${PROJECT_NAME}
-        Vulkan::Vulkan
-        SDL3::SDL3
-        glm::glm
-        GPUOpen::VulkanMemoryAllocator
-        spdlog::spdlog
+    volk::volk
+    Vulkan::Headers
+    SDL3::SDL3
+    glm::glm
+    GPUOpen::VulkanMemoryAllocator
+    spdlog::spdlog
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
@@ -72,6 +81,10 @@ target_compile_options(${PROJECT_NAME} PRIVATE
                                     -fstack-protector
                                     -fsanitize=undefined)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wswitch -Wall -Wunused)
+
+target_link_options(${PROJECT_NAME} PRIVATE
+                                    -fsanitize=address
+                                    -fsanitize=undefined)
 
 add_slang_shader_target(shaders
     SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/shader.slang)
