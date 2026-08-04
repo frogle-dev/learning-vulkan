@@ -3,20 +3,23 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_hints.h>
 
-#include <expected>
+#include "error.hpp"
 
-enum class WindowError
+enum class WindowErrorKind
 {
     SdlInitFailed,
     SdlSetHintFailed,
     SdlWindowCreationFailed,
 };
 
+using WindowError = Error<WindowErrorKind>;
+
+template <typename T> using WindowResult = std::expected<T, WindowError>;
+
 class Window
 {
   public:
-    static std::expected<Window, WindowError> init(uint16_t start_width,
-                                                   uint16_t start_height);
+    static WindowResult<Window> init(uint16_t start_width, uint16_t start_height);
     void deinit();
 
     SDL_Window *getSDLWindow() const;

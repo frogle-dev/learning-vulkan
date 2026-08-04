@@ -1,5 +1,7 @@
 #include "engine.hpp"
 
+#include "error.hpp"
+
 constexpr uint16_t width  = 960;
 constexpr uint16_t height = 960;
 
@@ -8,7 +10,7 @@ int main()
     auto window = Window::init(width, height);
     if (!window)
     {
-        spdlog::error("Window init failed: {}\n", magic_enum::enum_name(window.error()));
+        window.error().log("Window init failed");
         return -1;
     }
 

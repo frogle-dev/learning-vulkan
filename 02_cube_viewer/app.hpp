@@ -13,12 +13,11 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include "Window/window.hpp"
-#include "magic_enum.hpp"
+#include "error.hpp"
 #include "stb_image.h"
 
 #include <chrono>
 #include <fstream>
-#include <source_location>
 
 inline std::filesystem::path appPath()
 {
@@ -83,7 +82,7 @@ struct UniformBufferObject
     alignas(16) glm::mat4 proj;
 };
 
-enum class ErrorKind
+enum class AppErrorKind
 {
     VulkanFailure,
     SDLFailure,
@@ -98,58 +97,19 @@ enum class ErrorKind
     NoSuitableMemoryType,
 };
 
-struct AppError
-{
-    AppError(std::string message, ErrorKind kind,
-             std::source_location location = std::source_location::current())
-        : kind_(kind), message_(std::move(message)), location_(location)
-    {
-    }
+using AppError = Error<AppErrorKind>;
 
-    AppError(std::string message, vk::Result result,
-             std::source_location location = std::source_location::current())
-        : kind_(ErrorKind::VulkanFailure), message_(std::move(message)),
-          vk_result_(result), location_(location)
-    {
-    }
-
-    static std::unexpected<AppError> unexpected(AppError error)
-    {
-        return std::unexpected(std::move(error));
-    }
-
-    void log(std::string message)
-    {
-        spdlog::error(message);
-        spdlog::error("File: {} | Line: {} | Func: {}", location_.file_name(),
-                      location_.line(), location_.function_name());
-
-        if (vk_result_.has_value())
-            spdlog::error("Kind: {} | vk::Result: {}", magic_enum::enum_name(kind_),
-                          vk::to_string(vk_result_.value()));
-        else
-            spdlog::error("Kind: {}", magic_enum::enum_name(kind_));
-
-        spdlog::error("Message: {}\n", message_);
-    }
-
-    ErrorKind kind_;
-    std::string message_;
-    std::optional<vk::Result> vk_result_ = std::nullopt;
-    std::source_location location_;
-};
-
-template <typename T> using Result = std::expected<T, AppError>;
+template <typename T> using AppResult = std::expected<T, AppError>;
 
 class App
 {
   public:
-    [[nodiscard]] static Result<App> init(Window &window);
-    [[nodiscard]] Result<void> deinit();
+    [[nodiscard]] static AppResult<App> init(Window &window);
+    [[nodiscard]] AppResult<void> deinit();
 
     bool isRunning();
-    [[nodiscard]] Result<void> pollEvents();
-    [[nodiscard]] Result<void> endFrame();
+    [[nodiscard]] AppResult<void> pollEvents();
+    [[nodiscard]] AppResult<void> endFrame();
 
   private:
     App() = default;
@@ -214,7 +174,7 @@ class App
     /* APPLICATION METHODS */
 
     [[nodiscard]]
-    Result<void> initVulkan()
+    AppResult<void> initVulkan()
     {
         VkResult volk_result = volkInitialize();
         if (volk_result != VK_SUCCESS)
@@ -313,7 +273,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> drawFrame()
+    AppResult<void> drawFrame()
     {
         vk::Result result = logical_device_.waitForFences(1, &draw_fences_[frame_idx_],
                                                           VK_TRUE, UINT64_MAX);
@@ -426,7 +386,7 @@ class App
     /* SETUP METHODS */
 
     [[nodiscard]]
-    static Result<std::vector<char>> readFile(const std::string &path)
+    static AppResult<std::vector<char>> readFile(const std::string &path)
     {
         // std::ios::ate - reading starts at the end of file
         // std::ios::binary - reads file as a binary
@@ -435,7 +395,7 @@ class App
         if (!fin.is_open())
         {
             return AppError::unexpected(
-                {"Failed to open file", ErrorKind::FailedToOpenFile});
+                {"Failed to open file", AppErrorKind::FailedToOpenFile});
         }
 
         // get position at end of file to get file length
@@ -483,7 +443,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> setupDebugMessenger()
+    AppResult<void> setupDebugMessenger()
     {
         if (!enable_validation_layers)
             return {};
@@ -528,7 +488,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createInstance()
+    AppResult<void> createInstance()
     {
         // VULKAN INSTANCE CREATION
         // instance is used to communicate with vulkan
@@ -567,7 +527,7 @@ class App
             if (!found)
             {
                 return AppError::unexpected({"Validation layer not supported",
-                                             ErrorKind::ValidationLayerNotSupported});
+                                             AppErrorKind::ValidationLayerNotSupported});
             }
         }
 
@@ -594,7 +554,7 @@ class App
             if (!found)
             {
                 return AppError::unexpected(
-                    {"Extension not supported", ErrorKind::ExtensionNotSupported});
+                    {"Extension not supported", AppErrorKind::ExtensionNotSupported});
             }
         }
 
@@ -616,7 +576,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createWindowSurface()
+    AppResult<void> createWindowSurface()
     {
         VkSurfaceKHR c_surface;
 
@@ -625,7 +585,7 @@ class App
         {
             return AppError::unexpected(
                 {"SDL_Vulkan_CreateSurface failed: " + std::string(SDL_GetError()),
-                 ErrorKind::SurfaceCreationFailed});
+                 AppErrorKind::SurfaceCreationFailed});
         }
 
         window_surface_ = vk::SurfaceKHR(c_surface);
@@ -633,7 +593,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<bool> isDeviceSuitable(vk::PhysicalDevice const &physical_device)
+    AppResult<bool> isDeviceSuitable(vk::PhysicalDevice const &physical_device)
     {
         // if supports vulkan 1.3
         vk::PhysicalDeviceProperties physical_device_properties;
@@ -705,7 +665,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> pickPhysicalDevice()
+    AppResult<void> pickPhysicalDevice()
     {
         // checking if physical devices meet requirements
 
@@ -732,14 +692,14 @@ class App
         if (!found)
         {
             return AppError::unexpected(
-                {"Failed to find physical device", ErrorKind::FailedToFindGPU});
+                {"Failed to find physical device", AppErrorKind::FailedToFindGPU});
         }
 
         return {};
     }
 
     [[nodiscard]]
-    Result<void> createLogicalDevice()
+    AppResult<void> createLogicalDevice()
     {
         auto queue_family_properties = physical_device_.getQueueFamilyProperties();
 
@@ -767,8 +727,8 @@ class App
 
         if (queue_family_idx_ == UINT32_MAX)
         {
-            return AppError::unexpected(
-                {"Couldnt find suitable queue family", ErrorKind::NoSuitableQueueFamily});
+            return AppError::unexpected({"Couldnt find suitable queue family",
+                                         AppErrorKind::NoSuitableQueueFamily});
         }
 
         // getting features
@@ -864,7 +824,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<vk::Extent2D>
+    AppResult<vk::Extent2D>
     chooseSwapchainExtent(vk::SurfaceCapabilitiesKHR const &surface_capabilities)
     {
         // extent is the resolution of the images in the swapchain
@@ -880,7 +840,7 @@ class App
         if (!success)
             return AppError::unexpected(
                 {"SDL_GetWindowSizeInPixels failed" + std::string(SDL_GetError()),
-                 ErrorKind::SDLFailure});
+                 AppErrorKind::SDLFailure});
 
         return vk::Extent2D{
             std::clamp<uint32_t>(width, surface_capabilities.minImageExtent.width,
@@ -911,7 +871,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> recreateSwapchain()
+    AppResult<void> recreateSwapchain()
     {
         int width  = 0;
         int height = 0;
@@ -920,7 +880,7 @@ class App
         if (!success)
             return AppError::unexpected(
                 {"SDL_GetWindowSizeInPixels failed" + std::string(SDL_GetError()),
-                 ErrorKind::SDLFailure});
+                 AppErrorKind::SDLFailure});
 
         while (width == 0 || height == 0)
         {
@@ -928,13 +888,13 @@ class App
             if (!success)
                 return AppError::unexpected(
                     {"SDL_GetWindowSizeInPixels failed" + std::string(SDL_GetError()),
-                     ErrorKind::SDLFailure});
+                     AppErrorKind::SDLFailure});
 
             success = SDL_WaitEvent(&window_->getCurrentEvent());
             if (!success)
                 return AppError::unexpected(
                     {"SDL_WaitEvent failed" + std::string(SDL_GetError()),
-                     ErrorKind::SDLFailure});
+                     AppErrorKind::SDLFailure});
         }
 
         vk::Result result = logical_device_.waitIdle();
@@ -956,7 +916,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createSwapchain()
+    AppResult<void> createSwapchain()
     {
         vk::SurfaceCapabilitiesKHR surface_capabilities;
         vk::Result result = physical_device_.getSurfaceCapabilitiesKHR(
@@ -1021,7 +981,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<vk::ImageView> createImageView(vk::Image const &image, vk::Format format)
+    AppResult<vk::ImageView> createImageView(vk::Image const &image, vk::Format format)
     {
         vk::ImageViewCreateInfo view_info{
             .image            = image,
@@ -1042,7 +1002,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createImageViews()
+    AppResult<void> createImageViews()
     {
         assert(swapchain_image_views_.empty());
 
@@ -1064,7 +1024,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createDescriptorSetLayout()
+    AppResult<void> createDescriptorSetLayout()
     {
         std::array bindings = {
             vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1,
@@ -1092,7 +1052,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createGraphicsPipeline()
+    AppResult<void> createGraphicsPipeline()
     {
         /* SHADER STAGE SETUP */
 
@@ -1228,7 +1188,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<vk::ShaderModule> createShaderModule(const std::vector<char> &code) const
+    AppResult<vk::ShaderModule> createShaderModule(const std::vector<char> &code) const
     {
         vk::ShaderModuleCreateInfo createInfo{
             .codeSize = code.size() * sizeof(char),
@@ -1245,7 +1205,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createCommandPool()
+    AppResult<void> createCommandPool()
     {
         vk::CommandPoolCreateInfo pool_info{
             .flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
@@ -1262,10 +1222,10 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createImage(uint32_t width, uint32_t height, vk::Format format,
-                             vk::ImageTiling tiling, vk::ImageUsageFlags usage,
-                             vk::MemoryPropertyFlags properties, vk::Image &image,
-                             vk::DeviceMemory &image_memory)
+    AppResult<void> createImage(uint32_t width, uint32_t height, vk::Format format,
+                                vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+                                vk::MemoryPropertyFlags properties, vk::Image &image,
+                                vk::DeviceMemory &image_memory)
     {
         vk::ImageCreateInfo image_info{
             .imageType   = vk::ImageType::e2D,
@@ -1307,8 +1267,9 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> transitionImageLayout(vk::Image const &image, vk::ImageLayout old_layout,
-                                       vk::ImageLayout new_layout)
+    AppResult<void> transitionImageLayout(vk::Image const &image,
+                                          vk::ImageLayout old_layout,
+                                          vk::ImageLayout new_layout)
     {
         auto command_buffer = beginOneTimeCommandBuffer();
         if (!command_buffer)
@@ -1345,7 +1306,7 @@ class App
         else
         {
             return AppError::unexpected({"Image layout transition not supported",
-                                         ErrorKind::TransitionNotSupported});
+                                         AppErrorKind::TransitionNotSupported});
         }
 
         command_buffer.value().pipelineBarrier(src_stage, dst_stage, {}, {}, nullptr, 0,
@@ -1360,7 +1321,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createTextureImage()
+    AppResult<void> createTextureImage()
     {
         int tex_width, tex_height, tex_channels;
         stbi_uc *pixels = stbi_load((appPath() / "textures/dirt.png").c_str(), &tex_width,
@@ -1370,7 +1331,7 @@ class App
 
         if (!pixels)
             return AppError::unexpected(
-                {"stbi_load failed", ErrorKind::FailedToLoadImage});
+                {"stbi_load failed", AppErrorKind::FailedToLoadImage});
 
         vk::Buffer staging_buffer              = nullptr;
         vk::DeviceMemory staging_buffer_memory = nullptr;
@@ -1425,7 +1386,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createTextureImageView()
+    AppResult<void> createTextureImageView()
     {
         auto expected = createImageView(texture_image_, vk::Format::eR8G8B8A8Srgb);
         if (!expected)
@@ -1437,7 +1398,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createTextureSampler()
+    AppResult<void> createTextureSampler()
     {
         vk::PhysicalDeviceProperties properties;
         physical_device_.getProperties(&properties);
@@ -1469,8 +1430,8 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> copyBufferToImage(vk::Buffer const &buffer, vk::Image &image,
-                                   uint32_t width, uint32_t height)
+    AppResult<void> copyBufferToImage(vk::Buffer const &buffer, vk::Image &image,
+                                      uint32_t width, uint32_t height)
     {
         auto command_buffer = beginOneTimeCommandBuffer();
         if (!command_buffer)
@@ -1496,8 +1457,8 @@ class App
     }
 
     [[nodiscard]]
-    Result<uint32_t> findMemoryType(uint32_t typeFilter,
-                                    vk::MemoryPropertyFlags properties)
+    AppResult<uint32_t> findMemoryType(uint32_t typeFilter,
+                                       vk::MemoryPropertyFlags properties)
     {
         vk::PhysicalDeviceMemoryProperties mem_properties;
         physical_device_.getMemoryProperties(&mem_properties);
@@ -1512,13 +1473,13 @@ class App
         }
 
         return AppError::unexpected(
-            {"Failed to find memory type", ErrorKind::NoSuitableMemoryType});
+            {"Failed to find memory type", AppErrorKind::NoSuitableMemoryType});
     }
 
     [[nodiscard]]
-    Result<void> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
-                              vk::MemoryPropertyFlags properties, vk::Buffer &buffer,
-                              vk::DeviceMemory &buffer_memory)
+    AppResult<void> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+                                 vk::MemoryPropertyFlags properties, vk::Buffer &buffer,
+                                 vk::DeviceMemory &buffer_memory)
     {
         vk::BufferCreateInfo buffer_info{
             .size        = size,
@@ -1556,7 +1517,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<vk::CommandBuffer> beginOneTimeCommandBuffer()
+    AppResult<vk::CommandBuffer> beginOneTimeCommandBuffer()
     {
         vk::CommandBufferAllocateInfo alloc_info{
             .commandPool        = command_pool_,
@@ -1583,7 +1544,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> endOneTimeCommandBuffer(vk::CommandBuffer &command_buffer)
+    AppResult<void> endOneTimeCommandBuffer(vk::CommandBuffer &command_buffer)
     {
         vk::Result result = command_buffer.end();
         if (result != vk::Result::eSuccess)
@@ -1606,8 +1567,8 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> copyBuffer(vk::Buffer &src_buffer, vk::Buffer &dst_buffer,
-                            vk::DeviceSize size)
+    AppResult<void> copyBuffer(vk::Buffer &src_buffer, vk::Buffer &dst_buffer,
+                               vk::DeviceSize size)
     {
         auto copy_command_buf = beginOneTimeCommandBuffer();
         if (!copy_command_buf)
@@ -1625,7 +1586,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createVertexBuffer()
+    AppResult<void> createVertexBuffer()
     {
         vk::DeviceSize buffer_size = sizeof(vertices[0]) * vertices.size();
 
@@ -1672,7 +1633,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createIndexBuffer()
+    AppResult<void> createIndexBuffer()
     {
         vk::DeviceSize buffer_size = sizeof(indices[0]) * indices.size();
 
@@ -1719,7 +1680,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createUniformBuffers()
+    AppResult<void> createUniformBuffers()
     {
         uniform_buffers_.clear();
         uniform_buffers_memory_.clear();
@@ -1756,7 +1717,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createDescriptorPool()
+    AppResult<void> createDescriptorPool()
     {
         std::array pool_size{
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
@@ -1782,7 +1743,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createDescriptorSets()
+    AppResult<void> createDescriptorSets()
     {
         std::vector<vk::DescriptorSetLayout> layouts(max_frames_in_flight,
                                                      descriptor_set_layout_);
@@ -1839,7 +1800,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createCommandBuffers()
+    AppResult<void> createCommandBuffers()
     {
         vk::CommandBufferAllocateInfo alloc_info{
             .commandPool        = command_pool_,
@@ -1858,7 +1819,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> recordCommandBuffer(uint32_t image_idx)
+    AppResult<void> recordCommandBuffer(uint32_t image_idx)
     {
         vk::CommandBuffer &command_buffer = command_buffers_[frame_idx_];
 
@@ -1967,7 +1928,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<void> createSyncObjects()
+    AppResult<void> createSyncObjects()
     {
         assert(present_complete_sphrs_.empty() && render_finished_sphrs_.empty() &&
                draw_fences_.empty());

@@ -67,7 +67,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_RPATH ${VULKAN_LIB_DIR}
 )
 
-target_sources(${PROJECT_NAME} PRIVATE main.cpp app.cpp Window/window.cpp stb_image.cpp vma.cpp volk.cpp)
+target_sources(${PROJECT_NAME} PRIVATE main.cpp app.cpp Window/window.cpp stb_image.cpp vma.cpp volk.cpp deletion_queue.cpp error.cpp)
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.hpp)
 
@@ -79,6 +79,8 @@ target_link_libraries(${PROJECT_NAME}
     GPUOpen::VulkanMemoryAllocator
     spdlog::spdlog
 )
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_options(${PROJECT_NAME} PRIVATE
                                     -fsanitize=address

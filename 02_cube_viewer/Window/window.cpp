@@ -10,12 +10,14 @@ std::expected<Window, WindowError> Window::init(uint16_t start_width,
 
     if (!SDL_Init(SDL_INIT_VIDEO))
     {
-        return std::unexpected(WindowError::SdlInitFailed);
+        return WindowError::unexpected(
+            {"Initializing sdl failed", WindowErrorKind::SdlInitFailed});
     }
 
     if (!SDL_SetHint(SDL_HINT_APP_ID, "HelloVulkan"))
     {
-        return std::unexpected(WindowError::SdlSetHintFailed);
+        return WindowError::unexpected(
+            {"Setting sdl hint failed", WindowErrorKind::SdlSetHintFailed});
     }
 
     win.window =
@@ -23,7 +25,8 @@ std::expected<Window, WindowError> Window::init(uint16_t start_width,
 
     if (win.window == nullptr)
     {
-        return std::unexpected(WindowError::SdlWindowCreationFailed);
+        return WindowError::unexpected(
+            {"Failed to create sdl window", WindowErrorKind::SdlWindowCreationFailed});
     }
 
     return win;
