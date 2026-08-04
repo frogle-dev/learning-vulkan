@@ -15,6 +15,7 @@
           shaderc
           shader-slang
           sdl3
+          llvm
           glm
           vulkan-memory-allocator
           gdb
