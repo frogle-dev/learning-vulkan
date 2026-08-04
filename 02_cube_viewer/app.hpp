@@ -13,6 +13,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include "Window/window.hpp"
+#include "deletion_queue.hpp"
 #include "error.hpp"
 #include "stb_image.h"
 
@@ -114,6 +115,8 @@ class App
   private:
     App() = default;
 
+    DeletionQueue deletion_queue_;
+
     Window *window_ = nullptr;
 
     bool running_ = false;
@@ -131,6 +134,8 @@ class App
     vk::DebugUtilsMessengerEXT debug_messenger_ = nullptr;
 
     vk::SurfaceKHR window_surface_ = nullptr; // Surface to render to window
+
+    DeletionQueue swapchain_deletion_queue_;
 
     vk::SwapchainKHR swapchain_ = nullptr;
     std::vector<vk::Image> swapchain_images_;
@@ -208,6 +213,9 @@ class App
 
         volkLoadDevice(static_cast<VkDevice>(logical_device_));
         VULKAN_HPP_DEFAULT_DISPATCHER.init(logical_device_);
+
+        deletion_queue_.setDevice(logical_device_);
+        swapchain_deletion_queue_.setDevice(logical_device_);
 
         expected = createSwapchain();
         if (!expected)
@@ -421,7 +429,7 @@ class App
         {
         case vk::DebugUtilsMessageSeverityFlagBitsEXT::eError:
             spdlog::error("[Validation Layer]: \n \
-                                [Type]: {} \n \n \
+                                [Type]: {} \n \
                                 [Message]: {} \n \
                                 --------------",
                           vk::to_string(type), pCallbackData->pMessage);
@@ -429,7 +437,7 @@ class App
             break;
         case vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning:
             spdlog::warn("[Validation Layer]: \n \
-                                [Type]: {} \n \n \
+                                [Type]: {} \n \
                                 [Message]: {} \n \
                                 --------------",
                          vk::to_string(type), pCallbackData->pMessage);
@@ -568,9 +576,10 @@ class App
 
         vk::Result result = vk::createInstance(&createInfo, nullptr, &instance_);
         if (result != vk::Result::eSuccess)
-        {
             return AppError::unexpected({"Failed to create instance", result});
-        }
+
+        deletion_queue_.pushBack([instance = instance_](vk::Device device)
+                                 { instance.destroy(); });
 
         return {};
     }
@@ -589,6 +598,7 @@ class App
         }
 
         window_surface_ = vk::SurfaceKHR(c_surface);
+
         return {};
     }
 
@@ -774,6 +784,8 @@ class App
 
         queue_ = logical_device_.getQueue(queue_family_idx_, 0);
 
+        deletion_queue_.pushBack([](vk::Device device) { device.destroy(); });
+
         return {};
     }
 
@@ -864,11 +876,7 @@ class App
         return min_img_count;
     }
 
-    void cleanupSwapchain()
-    {
-        swapchain_image_views_.clear();
-        swapchain_ = nullptr;
-    }
+    void cleanupSwapchain() { swapchain_deletion_queue_.deinit(); }
 
     [[nodiscard]]
     AppResult<void> recreateSwapchain()
@@ -901,7 +909,6 @@ class App
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Logical device wait idle failed", result});
 
-        swapchain_image_views_.clear();
         cleanupSwapchain();
 
         auto expected = createSwapchain();
@@ -932,14 +939,15 @@ class App
 
         uint32_t min_img_count = chooseSwapchainMinImageCount(surface_capabilities);
 
-        auto available_formats = physical_device_.getSurfaceFormatsKHR();
+        auto available_formats = physical_device_.getSurfaceFormatsKHR(window_surface_);
         if (available_formats.result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to get physical device surface formats",
                                          available_formats.result});
 
         swapchain_surface_format_ = chooseSwapchainSurfaceFormat(available_formats.value);
 
-        auto available_present_modes = physical_device_.getSurfacePresentModesKHR();
+        auto available_present_modes =
+            physical_device_.getSurfacePresentModesKHR(window_surface_);
         if (available_present_modes.result != vk::Result::eSuccess)
             return AppError::unexpected(
                 {"Failed to get physical device surface present modes",
@@ -976,6 +984,15 @@ class App
 
         swapchain_images_.assign(swapchain_imgs.value.begin(),
                                  swapchain_imgs.value.end());
+
+        swapchain_deletion_queue_.pushBack(
+            [swapchain = swapchain_, views = swapchain_image_views_](vk::Device device)
+            {
+                for (auto &view : views)
+                    device.destroyImageView(view);
+
+                device.destroySwapchainKHR(swapchain);
+            });
 
         return {};
     }
@@ -1190,18 +1207,18 @@ class App
     [[nodiscard]]
     AppResult<vk::ShaderModule> createShaderModule(const std::vector<char> &code) const
     {
-        vk::ShaderModuleCreateInfo createInfo{
+        vk::ShaderModuleCreateInfo create_info{
             .codeSize = code.size() * sizeof(char),
             .pCode    = reinterpret_cast<const uint32_t *>(code.data())};
 
-        vk::ShaderModule shaderModule;
+        vk::ShaderModule shader_module;
         vk::Result result =
-            logical_device_.createShaderModule(&createInfo, nullptr, &shaderModule);
+            logical_device_.createShaderModule(&create_info, nullptr, &shader_module);
 
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to create shader module", result});
 
-        return shaderModule;
+        return shader_module;
     }
 
     [[nodiscard]]
@@ -1318,6 +1335,39 @@ class App
             return AppError::unexpected(expected.error());
 
         return {};
+    }
+
+    void transitionImageLayout(uint32_t image_idx, vk::ImageLayout old_layout,
+                               vk::ImageLayout new_layout,
+                               vk::AccessFlags2 old_access_mask,
+                               vk::AccessFlags2 new_access_mask,
+                               vk::PipelineStageFlags2 old_stage_mask,
+                               vk::PipelineStageFlags2 new_stage_mask)
+    {
+        vk::ImageMemoryBarrier2 barrier = {
+            .srcStageMask        = old_stage_mask,
+            .srcAccessMask       = old_access_mask,
+            .dstStageMask        = new_stage_mask,
+            .dstAccessMask       = new_access_mask,
+            .oldLayout           = old_layout,
+            .newLayout           = new_layout,
+            .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+            .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+            .image               = swapchain_images_[image_idx],
+            .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                    .baseMipLevel   = 0,
+                                    .levelCount     = 1,
+                                    .baseArrayLayer = 0,
+                                    .layerCount     = 1},
+        };
+
+        vk::DependencyInfo dependency_info = {
+            .dependencyFlags         = {},
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers    = &barrier,
+        };
+
+        command_buffers_[frame_idx_].pipelineBarrier2(&dependency_info);
     }
 
     [[nodiscard]]
@@ -1823,7 +1873,8 @@ class App
     {
         vk::CommandBuffer &command_buffer = command_buffers_[frame_idx_];
 
-        vk::Result result = command_buffer.begin({});
+        vk::CommandBufferBeginInfo begin_info{};
+        vk::Result result = command_buffer.begin(&begin_info);
 
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to begin command buffer", result});
@@ -1869,7 +1920,8 @@ class App
 
         command_buffer.setScissor(0, 1, &scissor);
 
-        command_buffer.bindVertexBuffers(0, 1, &vertex_buffer_, nullptr);
+        vk::DeviceSize offset = 0;
+        command_buffer.bindVertexBuffers(0, 1, &vertex_buffer_, &offset);
         command_buffer.bindIndexBuffer(index_buffer_, 0, vk::IndexType::eUint16);
 
         command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
@@ -1894,39 +1946,6 @@ class App
         return {};
     }
 
-    void transitionImageLayout(uint32_t image_idx, vk::ImageLayout old_layout,
-                               vk::ImageLayout new_layout,
-                               vk::AccessFlags2 old_access_mask,
-                               vk::AccessFlags2 new_access_mask,
-                               vk::PipelineStageFlags2 old_stage_mask,
-                               vk::PipelineStageFlags2 new_stage_mask)
-    {
-        vk::ImageMemoryBarrier2 barrier = {
-            .srcStageMask        = old_stage_mask,
-            .srcAccessMask       = old_access_mask,
-            .dstStageMask        = new_stage_mask,
-            .dstAccessMask       = new_access_mask,
-            .oldLayout           = old_layout,
-            .newLayout           = new_layout,
-            .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-            .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-            .image               = swapchain_images_[image_idx],
-            .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                    .baseMipLevel   = 0,
-                                    .levelCount     = 1,
-                                    .baseArrayLayer = 0,
-                                    .layerCount     = 1},
-        };
-
-        vk::DependencyInfo dependency_info = {
-            .dependencyFlags         = {},
-            .imageMemoryBarrierCount = 1,
-            .pImageMemoryBarriers    = &barrier,
-        };
-
-        command_buffers_[frame_idx_].pipelineBarrier2(&dependency_info);
-    }
-
     [[nodiscard]]
     AppResult<void> createSyncObjects()
     {
@@ -1936,8 +1955,10 @@ class App
         render_finished_sphrs_.reserve(swapchain_images_.size());
         for (size_t i = 0; i < swapchain_images_.size(); i++)
         {
+            vk::SemaphoreCreateInfo sphr_info{};
+
             vk::Result result = logical_device_.createSemaphore(
-                nullptr, nullptr, &render_finished_sphrs_[i]);
+                &sphr_info, nullptr, &render_finished_sphrs_[i]);
 
             if (result != vk::Result::eSuccess)
                 return AppError::unexpected({"Failed to create semaphore", result});
@@ -1947,8 +1968,10 @@ class App
         draw_fences_.reserve(max_frames_in_flight);
         for (size_t i = 0; i < max_frames_in_flight; i++)
         {
+            vk::SemaphoreCreateInfo sphr_info{};
+
             vk::Result result = logical_device_.createSemaphore(
-                nullptr, nullptr, &present_complete_sphrs_[i]);
+                &sphr_info, nullptr, &present_complete_sphrs_[i]);
 
             if (result != vk::Result::eSuccess)
                 return AppError::unexpected({"Failed to create semaphore", result});

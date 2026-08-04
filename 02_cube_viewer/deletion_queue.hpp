@@ -16,13 +16,14 @@ template <typename T> using DeletionQueueResult = std::expected<T, DeletionQueue
 class DeletionQueue
 {
   public:
-    static DeletionQueue init();
-    void deinit();
-
-    void pushBack(std::function<void()> cleanup_func);
-
-  private:
     DeletionQueue() = default;
 
-    std::deque<std::function<void()>> deletion_queue_;
+    void deinit();
+
+    void setDevice(vk::Device logical_device) { device_ = logical_device; }
+    void pushBack(std::function<void(vk::Device)> cleanup_func);
+
+  private:
+    vk::Device device_ = nullptr;
+    std::deque<std::function<void(vk::Device)>> deletion_queue_;
 };

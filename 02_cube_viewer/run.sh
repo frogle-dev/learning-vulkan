@@ -1,4 +1,4 @@
 #!/bin/sh
 
 ./build.sh
-./build/learn_vulkan
+ASAN_OPTIONS=symbolize=1 ./build/learn_vulkan

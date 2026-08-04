@@ -3,7 +3,7 @@
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 [[nodiscard]]
-Result<App> App::init(Window &window)
+AppResult<App> App::init(Window &window)
 {
     App app;
 
@@ -13,14 +13,16 @@ Result<App> App::init(Window &window)
     auto expected = app.initVulkan();
 
     if (!expected)
-        return std::unexpected(expected.error());
+        return AppError::unexpected(expected.error());
 
     return app;
 }
 
 [[nodiscard]]
-Result<void> App::deinit()
+AppResult<void> App::deinit()
 {
+    deletion_queue_.deinit();
+
     cleanupSwapchain();
 
     vk::Result result = logical_device_.waitIdle();
@@ -31,7 +33,7 @@ Result<void> App::deinit()
     return {};
 }
 
-Result<void> App::pollEvents()
+AppResult<void> App::pollEvents()
 {
     while (window_->isEventReady())
     {
@@ -52,4 +54,4 @@ Result<void> App::pollEvents()
 
 bool App::isRunning() { return running_; }
 
-std::expected<void, AppError> App::endFrame() { return drawFrame(); }
+AppResult<void> App::endFrame() { return drawFrame(); }

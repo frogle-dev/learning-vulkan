@@ -20,7 +20,7 @@ template <ScopedEnum ErrorKind> struct Error
 
     Error(std::string message, vk::Result result,
           std::source_location location = std::source_location::current())
-        : message_(std::move(message)), vk_result_(result), location_(location)
+        : vk_result_(result), message_(std::move(message)), location_(location)
     {
     }
 
@@ -36,10 +36,11 @@ template <ScopedEnum ErrorKind> struct Error
                       location_.line(), location_.function_name());
 
         if (vk_result_.has_value())
-            spdlog::error("Kind: {} | vk::Result: {}", magic_enum::enum_name(kind_),
+            spdlog::error("Kind: {} | vk::Result: {}",
+                          magic_enum::enum_name(kind_.value()),
                           vk::to_string(vk_result_.value()));
         if (kind_.has_value())
-            spdlog::error("Kind: {}", magic_enum::enum_name(kind_));
+            spdlog::error("Kind: {}", magic_enum::enum_name(kind_.value()));
 
         spdlog::error("Message: {}\n", message_);
     }
