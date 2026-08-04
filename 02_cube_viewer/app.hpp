@@ -6,7 +6,6 @@
 #define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
-#include "vulkan/vulkan.hpp"
 #include <vulkan/vulkan.hpp>
 
 #include <vk_mem_alloc.h>
@@ -125,8 +124,11 @@ struct AppError
         spdlog::error("File: {} | Line: {} | Func: {}", location_.file_name(),
                       location_.line(), location_.function_name());
 
-        spdlog::error("Kind: {} | vk::Result: {}", magic_enum::enum_name(kind_),
-                      vk::to_string(vk_result_.value()));
+        if (vk_result_.has_value())
+            spdlog::error("Kind: {} | vk::Result: {}", magic_enum::enum_name(kind_),
+                          vk::to_string(vk_result_.value()));
+        else
+            spdlog::error("Kind: {}", magic_enum::enum_name(kind_));
 
         spdlog::error("Message: {}\n", message_);
     }
@@ -330,7 +332,7 @@ class App
             if (!expected)
                 return AppError::unexpected(expected.error());
 
-            return AppError::unexpected({"Swapchain image out of date", result});
+            return {}; // skip to next frame
         }
 
         if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
@@ -382,7 +384,6 @@ class App
         };
 
         result = queue_.presentKHR(&presentInfoKHR);
-        assert(result == vk::Result::eSuccess);
         if (result == vk::Result::eSuboptimalKHR ||
             result == vk::Result::eErrorOutOfDateKHR)
         {
@@ -583,7 +584,7 @@ class App
             bool found = false;
             for (auto const &extension : extension_properties.value)
             {
-                if (strcmp(extension.extensionName, required_extension))
+                if (strcmp(extension.extensionName, required_extension) == 0)
                 {
                     found = true;
                     break;
@@ -631,6 +632,7 @@ class App
         return {};
     }
 
+    [[nodiscard]]
     Result<bool> isDeviceSuitable(vk::PhysicalDevice const &physical_device)
     {
         // if supports vulkan 1.3
@@ -664,7 +666,7 @@ class App
         bool supports_all_required_extensions = true;
         for (char const *required_device_extension : required_device_extensions_)
         {
-            bool found = true;
+            bool found = false;
             for (auto const &available_device_extension :
                  available_device_extensions.value)
             {
@@ -716,7 +718,11 @@ class App
         bool found = false;
         for (auto const &physical_device : physical_devices.value)
         {
-            if (isDeviceSuitable(physical_device))
+            auto suitable = isDeviceSuitable(physical_device);
+            if (!suitable)
+                return AppError::unexpected(suitable.error());
+
+            if (suitable.value())
             {
                 found            = true;
                 physical_device_ = physical_device;
@@ -842,23 +848,15 @@ class App
         // full it replaces old images with new ones to display images as fast as
         // possible
 
-        bool found_fifo    = false;
         bool found_mailbox = false;
         for (vk::PresentModeKHR present_mode : available_present_modes)
         {
-            if (present_mode == vk::PresentModeKHR::eFifo)
-            {
-                found_fifo = true;
-                break;
-            }
             if (present_mode == vk::PresentModeKHR::eMailbox)
             {
                 found_mailbox = true;
                 break;
             }
         }
-
-        assert(found_fifo || found_mailbox);
 
         // if mailbox present mode is available, use it, otherwise FIFO present
         // mode
@@ -1023,7 +1021,7 @@ class App
     }
 
     [[nodiscard]]
-    Result<vk::ImageView> createImageView(vk::Image &image, vk::Format format)
+    Result<vk::ImageView> createImageView(vk::Image const &image, vk::Format format)
     {
         vk::ImageViewCreateInfo view_info{
             .image            = image,
@@ -1049,7 +1047,7 @@ class App
         assert(swapchain_image_views_.empty());
 
         swapchain_image_views_.resize(swapchain_images_.size());
-        for (uint32_t i = 0; i < swapchain_images_.size(); i++)
+        for (size_t i = 0; i < swapchain_images_.size(); i++)
         {
             auto image_view =
                 createImageView(swapchain_images_[i], swapchain_surface_format_.format);
@@ -1077,7 +1075,7 @@ class App
         };
 
         vk::DescriptorSetLayoutCreateInfo layout_info{
-            .bindingCount = bindings.size(),
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
             .pBindings    = bindings.data(),
         };
 
@@ -1368,7 +1366,7 @@ class App
         stbi_uc *pixels = stbi_load((appPath() / "textures/dirt.png").c_str(), &tex_width,
                                     &tex_height, &tex_channels, STBI_rgb_alpha);
 
-        vk::DeviceSize image_size = tex_width * tex_height * tex_channels;
+        vk::DeviceSize image_size = tex_width * tex_height * STBI_rgb_alpha;
 
         if (!pixels)
             return AppError::unexpected(
@@ -1504,7 +1502,7 @@ class App
         vk::PhysicalDeviceMemoryProperties mem_properties;
         physical_device_.getMemoryProperties(&mem_properties);
 
-        for (uint32_t i = 0; i < mem_properties.memoryTypeCount; i++)
+        for (size_t i = 0; i < mem_properties.memoryTypeCount; i++)
         {
             if ((typeFilter & (1 << i)) &&
                 (mem_properties.memoryTypes[i].propertyFlags & properties) == properties)
@@ -1727,7 +1725,7 @@ class App
         uniform_buffers_memory_.clear();
         uniform_buffers_mapped_.clear();
 
-        for (int i = 0; i < max_frames_in_flight; i++)
+        for (size_t i = 0; i < max_frames_in_flight; i++)
         {
             vk::DeviceSize buffer_size  = sizeof(UniformBufferObject);
             vk::Buffer buffer           = nullptr;
@@ -1742,15 +1740,16 @@ class App
             if (!expected)
                 return AppError::unexpected(expected.error());
 
-            vk::Result result = logical_device_.mapMemory(uniform_buffers_memory_[i], 0,
-                                                          buffer_size, {}, nullptr);
+            void *data = nullptr;
+            vk::Result result =
+                logical_device_.mapMemory(buffer_mem, 0, buffer_size, {}, &data);
 
             if (result != vk::Result::eSuccess)
                 return AppError::unexpected({"Failed to map memory", result});
 
             uniform_buffers_.emplace_back(std::move(buffer));
             uniform_buffers_memory_.emplace_back(std::move(buffer_mem));
-            uniform_buffers_mapped_.emplace_back(uniform_buffers_memory_[i]);
+            uniform_buffers_mapped_.emplace_back(std::move(data));
         }
 
         return {};
@@ -1769,7 +1768,7 @@ class App
         vk::DescriptorPoolCreateInfo pool_info{
             .flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets       = max_frames_in_flight,
-            .poolSizeCount = pool_size.size(),
+            .poolSizeCount = static_cast<uint32_t>(pool_size.size()),
             .pPoolSizes    = pool_size.data(),
         };
 
@@ -1796,13 +1795,14 @@ class App
 
         descriptor_sets_.clear();
 
+        descriptor_sets_.reserve(layouts.size());
         vk::Result result =
             logical_device_.allocateDescriptorSets(&alloc_info, descriptor_sets_.data());
 
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to allocated descriptor sets", result});
 
-        for (int i = 0; i < max_frames_in_flight; i++)
+        for (size_t i = 0; i < max_frames_in_flight; i++)
         {
             vk::DescriptorBufferInfo buffer_info{.buffer = uniform_buffers_[i],
                                                  .offset = 0,
@@ -1847,6 +1847,7 @@ class App
             .commandBufferCount = max_frames_in_flight,
         };
 
+        command_buffers_.resize(max_frames_in_flight);
         vk::Result result =
             logical_device_.allocateCommandBuffers(&alloc_info, command_buffers_.data());
 
@@ -1971,7 +1972,8 @@ class App
         assert(present_complete_sphrs_.empty() && render_finished_sphrs_.empty() &&
                draw_fences_.empty());
 
-        for (int i = 0; i < swapchain_images_.size(); i++)
+        render_finished_sphrs_.reserve(swapchain_images_.size());
+        for (size_t i = 0; i < swapchain_images_.size(); i++)
         {
             vk::Result result = logical_device_.createSemaphore(
                 nullptr, nullptr, &render_finished_sphrs_[i]);
@@ -1980,7 +1982,9 @@ class App
                 return AppError::unexpected({"Failed to create semaphore", result});
         }
 
-        for (int i = 0; i < max_frames_in_flight; i++)
+        present_complete_sphrs_.reserve(max_frames_in_flight);
+        draw_fences_.reserve(max_frames_in_flight);
+        for (size_t i = 0; i < max_frames_in_flight; i++)
         {
             vk::Result result = logical_device_.createSemaphore(
                 nullptr, nullptr, &present_complete_sphrs_[i]);
