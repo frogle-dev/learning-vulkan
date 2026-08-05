@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <sanitizer/lsan_interface.h>
 
 inline std::filesystem::path appPath()
 {
@@ -181,6 +182,7 @@ class App
     [[nodiscard]]
     AppResult<void> initVulkan()
     {
+        __lsan_disable();
         VkResult volk_result = volkInitialize();
         if (volk_result != VK_SUCCESS)
             return AppError::unexpected(
@@ -189,6 +191,7 @@ class App
         VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
         auto expected = createInstance();
+        __lsan_enable();
         if (!expected)
             return AppError::unexpected(expected.error());
 
@@ -284,7 +287,7 @@ class App
     AppResult<void> drawFrame()
     {
         vk::Result result = logical_device_.waitForFences(1, &draw_fences_[frame_idx_],
-                                                          VK_TRUE, UINT64_MAX);
+                                                          vk::True, UINT64_MAX);
 
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to wait for fences", result});
@@ -324,14 +327,14 @@ class App
         if (!expected)
             return AppError::unexpected(expected.error());
 
-        vk::PipelineStageFlags waitDestinationStageMask(
-            vk::PipelineStageFlagBits::eColorAttachmentOutput);
+        vk::PipelineStageFlags wait_destination_stage_mask =
+            vk::PipelineStageFlagBits::eColorAttachmentOutput;
 
-        const vk::SubmitInfo submitInfo{
+        const vk::SubmitInfo submit_info{
             .waitSemaphoreCount = 1,
             .pWaitSemaphores =
                 &present_complete_sphrs_[frame_idx_], // semaphores to wait for
-            .pWaitDstStageMask    = &waitDestinationStageMask,
+            .pWaitDstStageMask    = &wait_destination_stage_mask,
             .commandBufferCount   = 1,
             .pCommandBuffers      = &command_buffers_[frame_idx_],
             .signalSemaphoreCount = 1,
@@ -339,11 +342,11 @@ class App
                 &render_finished_sphrs_[image_idx], // semaphores to signal when done
         };
 
-        result = queue_.submit(1, &submitInfo, draw_fences_[frame_idx_]);
+        result = queue_.submit(1, &submit_info, draw_fences_[frame_idx_]);
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to submit queue", result});
 
-        const vk::PresentInfoKHR presentInfoKHR{
+        const vk::PresentInfoKHR present_info{
             .waitSemaphoreCount = 1,
             .pWaitSemaphores    = &render_finished_sphrs_[image_idx],
             .swapchainCount     = 1,
@@ -351,7 +354,7 @@ class App
             .pImageIndices      = &image_idx,
         };
 
-        result = queue_.presentKHR(&presentInfoKHR);
+        result = queue_.presentKHR(&present_info);
         if (result == vk::Result::eSuboptimalKHR ||
             result == vk::Result::eErrorOutOfDateKHR)
         {
@@ -477,6 +480,10 @@ class App
 
         debug_messenger_ = result.value;
 
+        deletion_queue_.pushBack(
+            [instance = instance_, debug_messenger = debug_messenger_](vk::Device device)
+            { instance.destroyDebugUtilsMessengerEXT(debug_messenger); });
+
         return {};
     }
 
@@ -598,6 +605,10 @@ class App
         }
 
         window_surface_ = vk::SurfaceKHR(c_surface);
+
+        deletion_queue_.pushBack(
+            [instance = instance_, window_surface = window_surface_](vk::Device device)
+            { instance.destroySurfaceKHR(window_surface); });
 
         return {};
     }
@@ -985,20 +996,15 @@ class App
         swapchain_images_.assign(swapchain_imgs.value.begin(),
                                  swapchain_imgs.value.end());
 
-        swapchain_deletion_queue_.pushBack(
-            [swapchain = swapchain_, views = swapchain_image_views_](vk::Device device)
-            {
-                for (auto &view : views)
-                    device.destroyImageView(view);
-
-                device.destroySwapchainKHR(swapchain);
-            });
+        swapchain_deletion_queue_.pushBack([swapchain = swapchain_](vk::Device device)
+                                           { device.destroySwapchainKHR(swapchain); });
 
         return {};
     }
 
     [[nodiscard]]
-    AppResult<vk::ImageView> createImageView(vk::Image const &image, vk::Format format)
+    AppResult<vk::ImageView> createImageView(vk::Image const &image, vk::Format format,
+                                             bool for_swapchain)
     {
         vk::ImageViewCreateInfo view_info{
             .image            = image,
@@ -1015,6 +1021,17 @@ class App
             return AppError::unexpected({"Failed to create image view", result});
         }
 
+        if (for_swapchain)
+        {
+            swapchain_deletion_queue_.pushBack([image_view](vk::Device device)
+                                               { device.destroyImageView(image_view); });
+        }
+        else
+        {
+            deletion_queue_.pushBack([image_view](vk::Device device)
+                                     { device.destroyImageView(image_view); });
+        }
+
         return image_view;
     }
 
@@ -1026,8 +1043,8 @@ class App
         swapchain_image_views_.resize(swapchain_images_.size());
         for (size_t i = 0; i < swapchain_images_.size(); i++)
         {
-            auto image_view =
-                createImageView(swapchain_images_[i], swapchain_surface_format_.format);
+            auto image_view = createImageView(swapchain_images_[i],
+                                              swapchain_surface_format_.format, true);
 
             if (!image_view)
             {
@@ -1064,6 +1081,10 @@ class App
             return AppError::unexpected(
                 {"Failed to create descriptor set layout", result});
         }
+
+        deletion_queue_.pushBack(
+            [descriptor_set_layout = descriptor_set_layout_](vk::Device device)
+            { device.destroyDescriptorSetLayout(descriptor_set_layout); });
 
         return {};
     }
@@ -1162,13 +1183,13 @@ class App
 
         /* PIPELINE SETUP */
 
-        vk::PipelineLayoutCreateInfo pipelione_layout_info{.setLayoutCount = 1,
-                                                           .pSetLayouts =
-                                                               &descriptor_set_layout_,
-                                                           .pushConstantRangeCount = 0};
+        vk::PipelineLayoutCreateInfo pipeline_layout_info{.setLayoutCount = 1,
+                                                          .pSetLayouts =
+                                                              &descriptor_set_layout_,
+                                                          .pushConstantRangeCount = 0};
 
         vk::Result result = logical_device_.createPipelineLayout(
-            &pipelione_layout_info, nullptr, &pipeline_layout_);
+            &pipeline_layout_info, nullptr, &pipeline_layout_);
 
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to create pipeline layout", result});
@@ -1201,11 +1222,19 @@ class App
             return AppError::unexpected({"Failed to create graphics pipeline", result});
         }
 
+        deletion_queue_.pushBack(
+            [pipeline_layout   = pipeline_layout_,
+             graphics_pipeline = graphics_pipeline_](vk::Device device)
+            {
+                device.destroyPipelineLayout(pipeline_layout);
+                device.destroyPipeline(graphics_pipeline);
+            });
+
         return {};
     }
 
     [[nodiscard]]
-    AppResult<vk::ShaderModule> createShaderModule(const std::vector<char> &code) const
+    AppResult<vk::ShaderModule> createShaderModule(const std::vector<char> &code)
     {
         vk::ShaderModuleCreateInfo create_info{
             .codeSize = code.size() * sizeof(char),
@@ -1217,6 +1246,9 @@ class App
 
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to create shader module", result});
+
+        deletion_queue_.pushBack([shader_module](vk::Device device)
+                                 { device.destroyShaderModule(shader_module); });
 
         return shader_module;
     }
@@ -1234,6 +1266,9 @@ class App
 
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to create command pool", result});
+
+        deletion_queue_.pushBack([command_pool = command_pool_](vk::Device device)
+                                 { device.destroyCommandPool(command_pool); });
 
         return {};
     }
@@ -1279,6 +1314,13 @@ class App
         result = logical_device_.bindImageMemory(image, image_memory, 0);
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to bind image memory", result});
+
+        deletion_queue_.pushBack(
+            [image, image_memory](vk::Device device)
+            {
+                device.freeMemory(image_memory);
+                device.destroyImage(image);
+            });
 
         return {};
     }
@@ -1438,7 +1480,7 @@ class App
     [[nodiscard]]
     AppResult<void> createTextureImageView()
     {
-        auto expected = createImageView(texture_image_, vk::Format::eR8G8B8A8Srgb);
+        auto expected = createImageView(texture_image_, vk::Format::eR8G8B8A8Srgb, false);
         if (!expected)
             return AppError::unexpected(expected.error());
 
@@ -1475,6 +1517,9 @@ class App
             logical_device_.createSampler(&sampler_info, nullptr, &texture_sampler_);
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to create sampler", result});
+
+        deletion_queue_.pushBack([tex_sampler = texture_sampler_](vk::Device device)
+                                 { device.destroySampler(tex_sampler); });
 
         return {};
     }
@@ -1562,6 +1607,13 @@ class App
         result = logical_device_.bindBufferMemory(buffer, buffer_memory, 0);
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to bind buffer memory", result});
+
+        deletion_queue_.pushBack(
+            [buffer, buffer_memory](vk::Device device)
+            {
+                device.freeMemory(buffer_memory);
+                device.destroyBuffer(buffer);
+            });
 
         return {};
     }
@@ -1789,6 +1841,9 @@ class App
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to create descriptor pool", result});
 
+        deletion_queue_.pushBack([descriptor_pool = descriptor_pool_](vk::Device device)
+                                 { device.destroyDescriptorPool(descriptor_pool); });
+
         return {};
     }
 
@@ -1962,6 +2017,9 @@ class App
 
             if (result != vk::Result::eSuccess)
                 return AppError::unexpected({"Failed to create semaphore", result});
+
+            deletion_queue_.pushBack([sphr = render_finished_sphrs_[i]](vk::Device device)
+                                     { device.destroySemaphore(sphr); });
         }
 
         present_complete_sphrs_.reserve(max_frames_in_flight);
@@ -1984,6 +2042,13 @@ class App
 
             if (result != vk::Result::eSuccess)
                 return AppError::unexpected({"Failed to create fence", result});
+
+            deletion_queue_.pushBack(
+                [sphr = present_complete_sphrs_[i]](vk::Device device)
+                { device.destroySemaphore(sphr); });
+
+            deletion_queue_.pushBack([fence = draw_fences_[i]](vk::Device device)
+                                     { device.destroyFence(fence); });
         }
 
         return {};

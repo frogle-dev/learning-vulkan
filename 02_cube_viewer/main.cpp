@@ -2,8 +2,8 @@
 
 #include "error.hpp"
 
-constexpr uint16_t width  = 960;
-constexpr uint16_t height = 960;
+uint16_t constexpr width  = 960;
+uint16_t constexpr height = 960;
 
 int main()
 {

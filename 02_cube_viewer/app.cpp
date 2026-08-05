@@ -21,14 +21,14 @@ AppResult<App> App::init(Window &window)
 [[nodiscard]]
 AppResult<void> App::deinit()
 {
-    deletion_queue_.deinit();
-
-    cleanupSwapchain();
-
     vk::Result result = logical_device_.waitIdle();
 
     if (result != vk::Result::eSuccess)
         return AppError::unexpected({"failed to logical device wait idle", result});
+
+    cleanupSwapchain();
+
+    deletion_queue_.deinit();
 
     return {};
 }

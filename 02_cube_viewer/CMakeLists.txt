@@ -67,7 +67,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_RPATH ${VULKAN_LIB_DIR}
 )
 
-target_sources(${PROJECT_NAME} PRIVATE main.cpp app.cpp Window/window.cpp stb_image.cpp vma.cpp volk.cpp deletion_queue.cpp error.cpp)
+target_sources(${PROJECT_NAME} PRIVATE main.cpp app.cpp Window/window.cpp stb_image.cpp vma.cpp volk.cpp deletion_queue.cpp)
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.hpp)
 

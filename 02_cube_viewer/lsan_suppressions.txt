@@ -1,0 +1,5 @@
+leak:libvulkan.so
+leak:libgallium
+leak:libvulkan_asahi
+leak:libnvidia
+leak:libEGL

@@ -24,12 +24,15 @@ template <ScopedEnum ErrorKind> struct Error
     {
     }
 
+    /// wrapper for std::unexpected
+    /// creates an unexpected for this error
     static std::unexpected<Error> unexpected(Error error)
     {
         return std::unexpected(std::move(error));
     }
 
-    void log(std::string message)
+    /// log the error + additional message to be prepended to the error message
+    void log(std::string message) const
     {
         spdlog::error(message);
         spdlog::error("File: {} | Line: {} | Func: {}", location_.file_name(),
@@ -45,6 +48,7 @@ template <ScopedEnum ErrorKind> struct Error
         spdlog::error("Message: {}\n", message_);
     }
 
+  private:
     std::optional<ErrorKind> kind_       = std::nullopt;
     std::optional<vk::Result> vk_result_ = std::nullopt;
     std::string message_;
