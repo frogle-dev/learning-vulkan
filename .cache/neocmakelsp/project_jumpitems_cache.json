@@ -1,0 +1,141 @@
+{
+  "date": "2026-08-05T10:09:19.636534176-07:00",
+  "data": {
+    "CMAKE_CXX_STANDARD": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 4
+          },
+          "end": {
+            "line": 3,
+            "character": 22
+          }
+        }
+      },
+      "document_info": "defined variable\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": false
+    },
+    "VOLK_PULL_IN_VULKAN": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 21,
+            "character": 4
+          },
+          "end": {
+            "line": 21,
+            "character": 23
+          }
+        }
+      },
+      "document_info": "defined variable\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": false
+    },
+    "add_slang_shader_target": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 38,
+            "character": 9
+          },
+          "end": {
+            "line": 38,
+            "character": 32
+          }
+        }
+      },
+      "document_info": "defined function\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": true
+    },
+    "SHADERS_DIR": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 40,
+            "character": 8
+          },
+          "end": {
+            "line": 40,
+            "character": 19
+          }
+        }
+      },
+      "document_info": "defined variable\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": false
+    },
+    "CMAKE_CXX_EXTENSIONS": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 5,
+            "character": 4
+          },
+          "end": {
+            "line": 5,
+            "character": 24
+          }
+        }
+      },
+      "document_info": "defined variable\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": false
+    },
+    "CMAKE_EXPORT_COMPILE_COMMANDS": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 4
+          },
+          "end": {
+            "line": 6,
+            "character": 33
+          }
+        }
+      },
+      "document_info": "defined variable\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": false
+    },
+    "CMAKE_CXX_STANDARD_REQUIRED": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 4,
+            "character": 4
+          },
+          "end": {
+            "line": 4,
+            "character": 31
+          }
+        }
+      },
+      "document_info": "defined variable\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": false
+    },
+    "ENTRY_POINTS": {
+      "location": {
+        "uri": "file:///home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+        "range": {
+          "start": {
+            "line": 41,
+            "character": 8
+          },
+          "end": {
+            "line": 41,
+            "character": 20
+          }
+        }
+      },
+      "document_info": "defined variable\nfrom: /home/jonah/Programming/CPP/Vulkan/learning-vulkan/02_cube_viewer/CMakeLists.txt",
+      "is_function": false
+    }
+  }
+}
