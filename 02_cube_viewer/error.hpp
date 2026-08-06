@@ -48,6 +48,12 @@ template <ScopedEnum ErrorKind> struct Error
         spdlog::error("Message: {}\n", message_);
     }
 
+    static inline void check(vk::Result result)
+    {
+        if (result != vk::Result::eSuccess)
+            return unexpected({"D", result});
+    }
+
   private:
     std::optional<ErrorKind> kind_       = std::nullopt;
     std::optional<vk::Result> vk_result_ = std::nullopt;

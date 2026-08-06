@@ -83,15 +83,19 @@ target_link_libraries(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_options(${PROJECT_NAME} PRIVATE
-                                    -fsanitize=address
+                                    # -fsanitize=address # sanitize address causes memory build up on start up with nvidia drivers, makes it take like 30 seconds to start up
+                                    # -fsanitize=undefined
+                                    -fsanitize=leak
                                     -fno-exceptions
                                     -fstack-protector
-                                    -fsanitize=undefined)
+)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wswitch -Wall -Wunused)
 
 target_link_options(${PROJECT_NAME} PRIVATE
-                                    -fsanitize=address
-                                    -fsanitize=undefined)
+                                    # -fsanitize=address
+                                    # -fsanitize=undefined
+                                    -fsanitize=leak
+)
 
 add_slang_shader_target(shaders
     SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/shader.slang)

@@ -7,6 +7,12 @@ AppResult<App> App::init(Window &window)
 {
     App app;
 
+#ifdef NDEBUG
+#else
+    spdlog::set_level(spdlog::level::debug);
+    spdlog::flush_on(spdlog::level::debug);
+#endif
+
     app.window_  = &window;
     app.running_ = true;
 
@@ -26,8 +32,7 @@ AppResult<void> App::deinit()
     if (result != vk::Result::eSuccess)
         return AppError::unexpected({"failed to logical device wait idle", result});
 
-    cleanupSwapchain();
-
+    swapchain_deletion_queue_.deinit();
     deletion_queue_.deinit();
 
     return {};

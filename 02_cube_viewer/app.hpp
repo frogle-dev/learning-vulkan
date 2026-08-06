@@ -19,7 +19,6 @@
 
 #include <chrono>
 #include <fstream>
-#include <sanitizer/lsan_interface.h>
 
 inline std::filesystem::path appPath()
 {
@@ -125,52 +124,53 @@ class App
     std::array<const char *, 1> required_device_extensions_ = {
         vk::KHRSwapchainExtensionName};
 
-    vk::Instance instance_              = nullptr;
-    vk::PhysicalDevice physical_device_ = nullptr; // Physical device represents the GPU
-    vk::Device logical_device_ =
-        nullptr; // Logical Device is the interface for the physical device
-    vk::Queue queue_           = nullptr;
+    vk::Instance instance_              = VK_NULL_HANDLE;
+    vk::PhysicalDevice physical_device_ = VK_NULL_HANDLE; // Physical device represents
+                                                          // the GPU
+    vk::Device logical_device_ = nullptr; // Logical Device is the interface for the
+                                          // physical device
+    vk::Queue queue_           = VK_NULL_HANDLE;
     uint32_t queue_family_idx_ = UINT32_MAX;
 
-    vk::DebugUtilsMessengerEXT debug_messenger_ = nullptr;
+    vk::DebugUtilsMessengerEXT debug_messenger_ = VK_NULL_HANDLE;
 
-    vk::SurfaceKHR window_surface_ = nullptr; // Surface to render to window
+    vk::SurfaceKHR window_surface_ = VK_NULL_HANDLE; // Surface to render to window
 
     DeletionQueue swapchain_deletion_queue_;
 
-    vk::SwapchainKHR swapchain_ = nullptr;
+    vk::SwapchainKHR swapchain_ = VK_NULL_HANDLE;
     std::vector<vk::Image> swapchain_images_;
     vk::SurfaceFormatKHR swapchain_surface_format_;
     vk::Extent2D swapchain_extent_;
     std::vector<vk::ImageView> swapchain_image_views_;
 
-    vk::DescriptorSetLayout descriptor_set_layout_ = nullptr;
-    vk::PipelineLayout pipeline_layout_            = nullptr;
-    vk::Pipeline graphics_pipeline_                = nullptr;
+    vk::DescriptorSetLayout descriptor_set_layout_ = VK_NULL_HANDLE;
+    vk::PipelineLayout pipeline_layout_            = VK_NULL_HANDLE;
+    vk::Pipeline graphics_pipeline_                = VK_NULL_HANDLE;
 
-    vk::CommandPool command_pool_ = nullptr;
+    vk::CommandPool command_pool_ = VK_NULL_HANDLE;
     std::vector<vk::CommandBuffer> command_buffers_;
 
     uint32_t frame_idx_ = 0;
 
     // buffers
-    vk::Buffer vertex_buffer_              = nullptr;
-    vk::DeviceMemory vertex_buffer_memory_ = nullptr;
-    vk::Buffer index_buffer_               = nullptr;
-    vk::DeviceMemory index_buffer_memory_  = nullptr;
+    vk::Buffer vertex_buffer_              = VK_NULL_HANDLE;
+    vk::DeviceMemory vertex_buffer_memory_ = VK_NULL_HANDLE;
+    vk::Buffer index_buffer_               = VK_NULL_HANDLE;
+    vk::DeviceMemory index_buffer_memory_  = VK_NULL_HANDLE;
 
     std::vector<vk::Buffer> uniform_buffers_;
     std::vector<vk::DeviceMemory> uniform_buffers_memory_;
     std::vector<void *> uniform_buffers_mapped_;
 
-    vk::DescriptorPool descriptor_pool_ = nullptr;
+    vk::DescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     std::vector<vk::DescriptorSet> descriptor_sets_;
 
     // textures
-    vk::Image texture_image_               = nullptr;
-    vk::DeviceMemory texture_image_memory_ = nullptr;
-    vk::ImageView texture_image_view_      = nullptr;
-    vk::Sampler texture_sampler_           = nullptr;
+    vk::Image texture_image_               = VK_NULL_HANDLE;
+    vk::DeviceMemory texture_image_memory_ = VK_NULL_HANDLE;
+    vk::ImageView texture_image_view_      = VK_NULL_HANDLE;
+    vk::Sampler texture_sampler_           = VK_NULL_HANDLE;
 
     // Sync objects
     std::vector<vk::Semaphore> present_complete_sphrs_;
@@ -182,7 +182,6 @@ class App
     [[nodiscard]]
     AppResult<void> initVulkan()
     {
-        __lsan_disable();
         VkResult volk_result = volkInitialize();
         if (volk_result != VK_SUCCESS)
             return AppError::unexpected(
@@ -191,7 +190,6 @@ class App
         VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
         auto expected = createInstance();
-        __lsan_enable();
         if (!expected)
             return AppError::unexpected(expected.error());
 
@@ -220,7 +218,7 @@ class App
         deletion_queue_.setDevice(logical_device_);
         swapchain_deletion_queue_.setDevice(logical_device_);
 
-        expected = createSwapchain();
+        expected = createSwapchain(false);
         if (!expected)
             return AppError::unexpected(expected.error());
 
@@ -332,14 +330,14 @@ class App
 
         const vk::SubmitInfo submit_info{
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores =
-                &present_complete_sphrs_[frame_idx_], // semaphores to wait for
+            .pWaitSemaphores = &present_complete_sphrs_[frame_idx_], // semaphores to wait
+                                                                     // for
             .pWaitDstStageMask    = &wait_destination_stage_mask,
             .commandBufferCount   = 1,
             .pCommandBuffers      = &command_buffers_[frame_idx_],
             .signalSemaphoreCount = 1,
-            .pSignalSemaphores =
-                &render_finished_sphrs_[image_idx], // semaphores to signal when done
+            .pSignalSemaphores    = &render_finished_sphrs_[image_idx], // semaphores to
+                                                                     // signal when done
         };
 
         result = queue_.submit(1, &submit_info, draw_fences_[frame_idx_]);
@@ -363,6 +361,8 @@ class App
             if (!expected)
                 return AppError::unexpected(expected.error());
         }
+        else if (result != vk::Result::eSuccess)
+            return AppError::unexpected({"Failed to queue pesent", result});
 
         frame_idx_ = (frame_idx_ + 1) % max_frames_in_flight;
 
@@ -574,19 +574,20 @@ class App
         }
 
         // CREATING THE INSTANCE
-        vk::InstanceCreateInfo createInfo{
+        vk::InstanceCreateInfo instance_info{
             .pApplicationInfo        = &app_info,
             .enabledLayerCount       = static_cast<uint32_t>(required_layers.size()),
             .ppEnabledLayerNames     = required_layers.data(),
             .enabledExtensionCount   = static_cast<uint32_t>(required_extensions.size()),
-            .ppEnabledExtensionNames = required_extensions.data()};
+            .ppEnabledExtensionNames = required_extensions.data(),
+        };
 
-        vk::Result result = vk::createInstance(&createInfo, nullptr, &instance_);
+        vk::Result result = vk::createInstance(&instance_info, nullptr, &instance_);
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Failed to create instance", result});
 
-        deletion_queue_.pushBack([instance = instance_](vk::Device device)
-                                 { instance.destroy(); });
+        deletion_queue_.pushBack(
+            [instance = instance_](vk::Device device) { instance.destroy(); });
 
         return {};
     }
@@ -724,6 +725,8 @@ class App
     {
         auto queue_family_properties = physical_device_.getQueueFamilyProperties();
 
+        // SDL_Vulkan_GetPresentationSupport() // SET THIS UP NOTE:
+
         // check for support of both graphics and present queue families
         for (uint32_t queue_family_prop_idx = 0;
              queue_family_prop_idx < queue_family_properties.size();
@@ -777,9 +780,10 @@ class App
             .pQueuePriorities = &queue_priority};
 
         vk::DeviceCreateInfo device_create_info{
-            .pNext = &feature_chain
-                          .get<vk::PhysicalDeviceFeatures2>(), // connecting the chain of
-                                                               // features to vulkan
+            .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(), // connecting the
+                                                                        // chain of
+                                                                        // features to
+                                                                        // vulkan
             .queueCreateInfoCount = 1,
             .pQueueCreateInfos    = &device_queue_create_info,
             .enabledExtensionCount =
@@ -847,8 +851,8 @@ class App
     }
 
     [[nodiscard]]
-    AppResult<vk::Extent2D>
-    chooseSwapchainExtent(vk::SurfaceCapabilitiesKHR const &surface_capabilities)
+    AppResult<vk::Extent2D> chooseSwapchainExtent(
+        vk::SurfaceCapabilitiesKHR const &surface_capabilities)
     {
         // extent is the resolution of the images in the swapchain
 
@@ -872,8 +876,8 @@ class App
                                  surface_capabilities.maxImageExtent.height)};
     }
 
-    uint32_t
-    chooseSwapchainMinImageCount(vk::SurfaceCapabilitiesKHR const &surface_capabilities)
+    uint32_t chooseSwapchainMinImageCount(
+        vk::SurfaceCapabilitiesKHR const &surface_capabilities)
     {
         uint32_t min_img_count =
             std::max(uint32_t(3), surface_capabilities.minImageCount);
@@ -886,8 +890,6 @@ class App
 
         return min_img_count;
     }
-
-    void cleanupSwapchain() { swapchain_deletion_queue_.deinit(); }
 
     [[nodiscard]]
     AppResult<void> recreateSwapchain()
@@ -920,11 +922,16 @@ class App
         if (result != vk::Result::eSuccess)
             return AppError::unexpected({"Logical device wait idle failed", result});
 
-        cleanupSwapchain();
+        swapchain_image_views_.clear();
 
-        auto expected = createSwapchain();
+        auto expected = createSwapchain(true);
         if (!expected)
             return AppError::unexpected(expected.error());
+
+        swapchain_deletion_queue_.deinit();
+
+        swapchain_deletion_queue_.pushBack([swapchain = swapchain_](vk::Device device)
+                                           { device.destroySwapchainKHR(swapchain); });
 
         expected = createImageViews();
         if (!expected)
@@ -933,8 +940,11 @@ class App
         return {};
     }
 
+    /// if recreate is on, the swapchain cleanup will have to be handled manually
+    /// only turn on recreate when the swapchain must be recreated and the old swapchain
+    /// deletion queue has to be flushed before a new swapchain is appended
     [[nodiscard]]
-    AppResult<void> createSwapchain()
+    AppResult<void> createSwapchain(bool recreate)
     {
         vk::SurfaceCapabilitiesKHR surface_capabilities;
         vk::Result result = physical_device_.getSurfaceCapabilitiesKHR(
@@ -980,8 +990,7 @@ class App
             .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
             .presentMode      = present_mode,
             .clipped          = true,
-            .oldSwapchain     = swapchain_,
-        };
+            .oldSwapchain = (swapchain_ == VK_NULL_HANDLE) ? VK_NULL_HANDLE : swapchain_};
 
         result = logical_device_.createSwapchainKHR(&swapchain_create_info, nullptr,
                                                     &swapchain_);
@@ -996,8 +1005,12 @@ class App
         swapchain_images_.assign(swapchain_imgs.value.begin(),
                                  swapchain_imgs.value.end());
 
-        swapchain_deletion_queue_.pushBack([swapchain = swapchain_](vk::Device device)
-                                           { device.destroySwapchainKHR(swapchain); });
+        if (!recreate)
+        {
+            swapchain_deletion_queue_.pushBack(
+                [swapchain = swapchain_](vk::Device device)
+                { device.destroySwapchainKHR(swapchain); });
+        }
 
         return {};
     }
@@ -1023,13 +1036,13 @@ class App
 
         if (for_swapchain)
         {
-            swapchain_deletion_queue_.pushBack([image_view](vk::Device device)
-                                               { device.destroyImageView(image_view); });
+            swapchain_deletion_queue_.pushBack(
+                [image_view](vk::Device device) { device.destroyImageView(image_view); });
         }
         else
         {
-            deletion_queue_.pushBack([image_view](vk::Device device)
-                                     { device.destroyImageView(image_view); });
+            deletion_queue_.pushBack(
+                [image_view](vk::Device device) { device.destroyImageView(image_view); });
         }
 
         return image_view;
@@ -1223,8 +1236,8 @@ class App
         }
 
         deletion_queue_.pushBack(
-            [pipeline_layout   = pipeline_layout_,
-             graphics_pipeline = graphics_pipeline_](vk::Device device)
+            [pipeline_layout = pipeline_layout_, graphics_pipeline = graphics_pipeline_](
+                vk::Device device)
             {
                 device.destroyPipelineLayout(pipeline_layout);
                 device.destroyPipeline(graphics_pipeline);
@@ -1326,9 +1339,8 @@ class App
     }
 
     [[nodiscard]]
-    AppResult<void> transitionImageLayout(vk::Image const &image,
-                                          vk::ImageLayout old_layout,
-                                          vk::ImageLayout new_layout)
+    AppResult<void> transitionImageLayout(
+        vk::Image const &image, vk::ImageLayout old_layout, vk::ImageLayout new_layout)
     {
         auto command_buffer = beginOneTimeCommandBuffer();
         if (!command_buffer)
@@ -1379,12 +1391,10 @@ class App
         return {};
     }
 
-    void transitionImageLayout(uint32_t image_idx, vk::ImageLayout old_layout,
-                               vk::ImageLayout new_layout,
-                               vk::AccessFlags2 old_access_mask,
-                               vk::AccessFlags2 new_access_mask,
-                               vk::PipelineStageFlags2 old_stage_mask,
-                               vk::PipelineStageFlags2 new_stage_mask)
+    void transitionImageLayout(
+        uint32_t image_idx, vk::ImageLayout old_layout, vk::ImageLayout new_layout,
+        vk::AccessFlags2 old_access_mask, vk::AccessFlags2 new_access_mask,
+        vk::PipelineStageFlags2 old_stage_mask, vk::PipelineStageFlags2 new_stage_mask)
     {
         vk::ImageMemoryBarrier2 barrier = {
             .srcStageMask        = old_stage_mask,
@@ -1496,6 +1506,7 @@ class App
         physical_device_.getProperties(&properties);
 
         vk::SamplerCreateInfo sampler_info{
+            .flags                   = {},
             .magFilter               = vk::Filter::eNearest,
             .minFilter               = vk::Filter::eNearest,
             .mipmapMode              = vk::SamplerMipmapMode::eLinear,
@@ -1764,11 +1775,11 @@ class App
         logical_device_.unmapMemory(staging_buffer_memory);
 
         // vertex buffer
-        expected = createBuffer(buffer_size,
-                                vk::BufferUsageFlagBits::eIndexBuffer |
-                                    vk::BufferUsageFlagBits::eTransferDst,
-                                vk::MemoryPropertyFlagBits::eDeviceLocal, index_buffer_,
-                                index_buffer_memory_);
+        expected = createBuffer(
+            buffer_size,
+            vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, index_buffer_,
+            index_buffer_memory_);
 
         if (!expected)
             return AppError::unexpected(expected.error());

@@ -12,6 +12,7 @@
           vulkan-loader
           vulkan-validation-layers
           vulkan-tools
+          vulkan-tools-lunarg
           shaderc
           shader-slang
           sdl3
