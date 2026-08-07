@@ -1,7 +1,7 @@
 #include "window.hpp"
 
-std::expected<Window, WindowError> Window::init(uint16_t start_width,
-                                                uint16_t start_height)
+WindowResult<Window> Window::init(uint16_t start_width, uint16_t start_height,
+                                  std::string const &window_name)
 {
     Window win;
 
@@ -14,14 +14,14 @@ std::expected<Window, WindowError> Window::init(uint16_t start_width,
             {"Initializing sdl failed", WindowErrorKind::SdlInitFailed});
     }
 
-    if (!SDL_SetHint(SDL_HINT_APP_ID, "HelloVulkan"))
+    if (!SDL_SetHint(SDL_HINT_APP_ID, window_name.c_str()))
     {
         return WindowError::unexpected(
             {"Setting sdl hint failed", WindowErrorKind::SdlSetHintFailed});
     }
 
-    win.window =
-        SDL_CreateWindow("HelloVulkan", win.width, win.height, SDL_WINDOW_RESIZABLE);
+    win.window = SDL_CreateWindow(window_name.c_str(), win.width, win.height,
+                                  SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 
     if (win.window == nullptr)
     {

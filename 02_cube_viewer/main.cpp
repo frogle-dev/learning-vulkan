@@ -5,16 +5,18 @@
 uint16_t constexpr width  = 960;
 uint16_t constexpr height = 960;
 
+std::string constexpr app_name = "HelloVulkan";
+
 int main()
 {
-    auto window = Window::init(width, height);
+    auto window = Window::init(width, height, app_name);
     if (!window)
     {
         window.error().log("Window init failed");
         return -1;
     }
 
-    auto app = App::init(window.value());
+    auto app = App::init(window.value(), app_name);
     if (!app)
     {
         app.error().log("App init failed");
@@ -45,5 +47,5 @@ int main()
         return -1;
     }
 
-    window->deinit();
+    window.value().deinit();
 }

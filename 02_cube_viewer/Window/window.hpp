@@ -19,7 +19,8 @@ template <typename T> using WindowResult = std::expected<T, WindowError>;
 class Window
 {
   public:
-    static WindowResult<Window> init(uint16_t start_width, uint16_t start_height);
+    static WindowResult<Window> init(uint16_t start_width, uint16_t start_height,
+                                     std::string const &window_name);
     void deinit();
 
     SDL_Window *getSDLWindow() const;

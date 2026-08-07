@@ -2,13 +2,16 @@
 
 #include <chrono>
 #include <fstream>
+#include <vulkan/vulkan.hpp>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 [[nodiscard]]
-AppResult<App> App::init(Window &window)
+AppResult<App> App::init(Window &window, std::string const &app_name)
 {
     App app;
+
+    app.app_name_ = app_name;
 
 #ifdef NDEBUG
 #else
@@ -20,7 +23,6 @@ AppResult<App> App::init(Window &window)
     app.running_ = true;
 
     auto expected = app.initVulkan();
-
     if (!expected)
         return AppError::unexpected(expected.error());
 
@@ -71,6 +73,8 @@ AppResult<void> App::initVulkan()
     if (volk_result != VK_SUCCESS)
         return AppError::unexpected(
             {"Failed to initialize volk", vk::Result(volk_result)});
+
+    deletion_queue_.pushBack([](vk::Device device) { volkFinalize(); });
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
@@ -177,7 +181,7 @@ AppResult<void> App::drawFrame()
 
     uint32_t image_idx;
     result = logical_device_.acquireNextImageKHR(
-        swapchain_, UINT64_MAX, present_complete_sphrs_[frame_idx_], nullptr, &image_idx);
+        swapchain_, UINT64_MAX, image_acquire_sphrs_[frame_idx_], nullptr, &image_idx);
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
@@ -212,15 +216,15 @@ AppResult<void> App::drawFrame()
     vk::PipelineStageFlags wait_destination_stage_mask =
         vk::PipelineStageFlagBits::eColorAttachmentOutput;
 
-    const vk::SubmitInfo submit_info{
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores    = &present_complete_sphrs_[frame_idx_], // semaphores to wait
-                                                                    // for
-        .pWaitDstStageMask  = &wait_destination_stage_mask,
-        .commandBufferCount = 1,
-        .pCommandBuffers    = &command_buffers_[frame_idx_],
+    vk::SubmitInfo const submit_info{
+        .waitSemaphoreCount   = 1,
+        .pWaitSemaphores      = &image_acquire_sphrs_[frame_idx_], // semaphores to wait
+                                                                   // for
+        .pWaitDstStageMask    = &wait_destination_stage_mask,
+        .commandBufferCount   = 1,
+        .pCommandBuffers      = &command_buffers_[frame_idx_],
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores    = &render_finished_sphrs_[image_idx], // semaphores to
+        .pSignalSemaphores    = &render_complete_sphrs_[image_idx], // semaphores to
                                                                     // signal when done
     };
 
@@ -228,9 +232,9 @@ AppResult<void> App::drawFrame()
     if (result != vk::Result::eSuccess)
         return AppError::unexpected({"Failed to submit queue", result});
 
-    const vk::PresentInfoKHR present_info{
+    vk::PresentInfoKHR const present_info{
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores    = &render_finished_sphrs_[image_idx],
+        .pWaitSemaphores    = &render_complete_sphrs_[image_idx],
         .swapchainCount     = 1,
         .pSwapchains        = &swapchain_,
         .pImageIndices      = &image_idx,
@@ -279,7 +283,7 @@ void App::updateUniformBuffer(uint32_t current_image)
 /* SETUP METHODS */
 
 [[nodiscard]]
-AppResult<std::vector<char>> App::readFile(const std::string &path)
+AppResult<std::vector<char>> App::readFile(std::string const &path)
 {
     // std::ios::ate - reading starts at the end of file
     // std::ios::binary - reads file as a binary
@@ -308,7 +312,7 @@ AppResult<std::vector<char>> App::readFile(const std::string &path)
 VKAPI_ATTR vk::Bool32 VKAPI_CALL App::debugCallback(
     vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
     vk::DebugUtilsMessageTypeFlagsEXT type,
-    const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData)
+    vk::DebugUtilsMessengerCallbackDataEXT const *pCallbackData, void *pUserData)
 {
     switch (severity)
     {
@@ -368,16 +372,16 @@ AppResult<void> App::setupDebugMessenger()
     return {};
 }
 
-std::vector<const char *> App::getRequiredInstanceExtensions()
+std::vector<char const *> App::getRequiredInstanceExtensions()
 {
-    uint32_t sdlExtensionCount = 0;
-    char const *const *sdlExtensions =
-        SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
+    uint32_t sdl_extension_count = 0;
+    char const *const *sdl_extensions =
+        SDL_Vulkan_GetInstanceExtensions(&sdl_extension_count);
 
-    std::vector extensions(sdlExtensions, sdlExtensions + sdlExtensionCount);
+    std::vector extensions(sdl_extensions, sdl_extensions + sdl_extension_count);
     if (enable_validation_layers)
     {
-        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        extensions.push_back(vk::EXTDebugUtilsExtensionName);
     }
 
     return extensions;
@@ -388,41 +392,40 @@ AppResult<void> App::createInstance()
 {
     // VULKAN INSTANCE CREATION
     // instance is used to communicate with vulkan
-    vk::ApplicationInfo constexpr app_info{.pApplicationName   = "Learn Vulkan",
-                                           .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-                                           .pEngineName        = "No Engine",
-                                           .engineVersion      = VK_MAKE_VERSION(1, 0, 0),
-                                           .apiVersion         = VK_API_VERSION_1_3};
+    vk::ApplicationInfo const app_info{.pApplicationName   = app_name_.c_str(),
+                                       .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+                                       .pEngineName        = "No Engine",
+                                       .engineVersion      = VK_MAKE_VERSION(1, 0, 0),
+                                       .apiVersion         = api_version};
 
-    // VALIDATION LAYERS
-    std::vector<char const *> required_layers;
+    // check if validation layers are available
+    std::vector<const char *> required_layers;
     if (enable_validation_layers)
     {
         required_layers.assign(validation_layers.begin(), validation_layers.end());
-    }
 
-    // check if validation layers are available
-    auto layer_properties = vk::enumerateInstanceLayerProperties();
-    if (layer_properties.result != vk::Result::eSuccess)
-        return AppError::unexpected(
-            {"Failed to enumerate instance layer properties", layer_properties.result});
+        auto layer_properties = vk::enumerateInstanceLayerProperties();
+        if (layer_properties.result != vk::Result::eSuccess)
+            return AppError::unexpected({"Failed to enumerate instance layer properties",
+                                         layer_properties.result});
 
-    for (char const *required_layer : required_layers)
-    {
-        bool found = false;
-        for (auto const &layer : layer_properties.value)
+        for (char const *required_layer : required_layers)
         {
-            if (strcmp(layer.layerName, required_layer) == 0)
+            bool found = false;
+            for (auto const &layer : layer_properties.value)
             {
-                found = true;
-                break;
+                if (strcmp(layer.layerName, required_layer) == 0)
+                {
+                    found = true;
+                    break;
+                }
             }
-        }
 
-        if (!found)
-        {
-            return AppError::unexpected({"Validation layer not supported",
-                                         AppErrorKind::ValidationLayerNotSupported});
+            if (!found)
+            {
+                return AppError::unexpected({"Validation layer not supported",
+                                             AppErrorKind::ValidationLayerNotSupported});
+            }
         }
     }
 
@@ -482,7 +485,7 @@ AppResult<void> App::createWindowSurface()
     {
         return AppError::unexpected(
             {"SDL_Vulkan_CreateSurface failed: " + std::string(SDL_GetError()),
-             AppErrorKind::SurfaceCreationFailed});
+             AppErrorKind::SDLFailure});
     }
 
     window_surface_ = vk::SurfaceKHR(c_surface);
@@ -497,10 +500,9 @@ AppResult<void> App::createWindowSurface()
 [[nodiscard]]
 AppResult<bool> App::isDeviceSuitable(vk::PhysicalDevice const &physical_device)
 {
-    // if supports vulkan 1.3
     vk::PhysicalDeviceProperties physical_device_properties;
     physical_device.getProperties(&physical_device_properties);
-    bool supports_vulkan1_3 = physical_device_properties.apiVersion >= VK_API_VERSION_1_3;
+    bool supports_vulkan1_4 = physical_device_properties.apiVersion >= api_version;
 
     // if supports graphics queue family
     auto queue_families = physical_device.getQueueFamilyProperties();
@@ -545,19 +547,28 @@ AppResult<bool> App::isDeviceSuitable(vk::PhysicalDevice const &physical_device)
 
     // if supports specific features
     auto features = physical_device.template getFeatures2<
-        vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
-        vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceFeatures, vk::PhysicalDeviceVulkan11Features,
+        vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
 
     bool supports_required_features =
+        features.template get<vk::PhysicalDeviceFeatures>().samplerAnisotropy &&
         features.template get<vk::PhysicalDeviceVulkan11Features>()
             .shaderDrawParameters &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>().descriptorIndexing &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .shaderSampledImageArrayNonUniformIndexing &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .descriptorBindingVariableDescriptorCount &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .runtimeDescriptorArray &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress &&
         features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
         features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
         features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
             .extendedDynamicState;
 
-    return supports_vulkan1_3 && supports_graphics && supports_all_required_extensions &&
+    return supports_vulkan1_4 && supports_graphics && supports_all_required_extensions &&
            supports_required_features;
 }
 
@@ -565,27 +576,41 @@ AppResult<bool> App::isDeviceSuitable(vk::PhysicalDevice const &physical_device)
 AppResult<void> App::pickPhysicalDevice()
 {
     // checking if physical devices meet requirements
-
     auto physical_devices = instance_.enumeratePhysicalDevices();
     if (physical_devices.result != vk::Result::eSuccess)
         return AppError::unexpected(
             {"Failed to enumerate physical device", physical_devices.result});
 
-    // find if a GPU meets all the requirements
     bool found = false;
+    std::vector<vk::PhysicalDevice> suitable_physical_devices;
+    suitable_physical_devices.reserve(1);
     for (auto const &physical_device : physical_devices.value)
     {
         auto suitable = isDeviceSuitable(physical_device);
         if (!suitable)
             return AppError::unexpected(suitable.error());
 
-        if (suitable.value())
+        if (!suitable.value())
         {
-            found            = true;
+            continue;
+        }
+
+        found = true;
+        suitable_physical_devices.push_back(physical_device);
+    }
+
+    physical_device_ = suitable_physical_devices[0];
+
+    for (auto const &physical_device : suitable_physical_devices)
+    {
+        if (physical_device.getProperties().deviceType ==
+            vk::PhysicalDeviceType::eDiscreteGpu)
+        {
             physical_device_ = physical_device;
             break;
         }
     }
+
     if (!found)
     {
         return AppError::unexpected(
@@ -600,19 +625,12 @@ AppResult<void> App::createLogicalDevice()
 {
     auto queue_family_properties = physical_device_.getQueueFamilyProperties();
 
-    // SDL_Vulkan_GetPresentationSupport() // SET THIS UP NOTE:
-
     // check for support of both graphics and present queue families
     for (uint32_t queue_family_prop_idx = 0;
          queue_family_prop_idx < queue_family_properties.size(); queue_family_prop_idx++)
     {
-        vk::Bool32 present_support = VK_FALSE;
-
-        vk::Result result = physical_device_.getSurfaceSupportKHR(
-            queue_family_prop_idx, window_surface_, &present_support);
-        if (result != vk::Result::eSuccess)
-            return AppError::unexpected(
-                {"Failed to get physical device surface support", result});
+        bool present_support = SDL_Vulkan_GetPresentationSupport(
+            instance_, physical_device_, queue_family_prop_idx);
 
         if ((queue_family_properties[queue_family_prop_idx].queueFlags &
              vk::QueueFlagBits::eGraphics) &&
@@ -1111,11 +1129,11 @@ AppResult<void> App::createGraphicsPipeline()
 }
 
 [[nodiscard]]
-AppResult<vk::ShaderModule> App::createShaderModule(const std::vector<char> &code)
+AppResult<vk::ShaderModule> App::createShaderModule(std::vector<char> const &code)
 {
     vk::ShaderModuleCreateInfo create_info{
         .codeSize = code.size() * sizeof(char),
-        .pCode    = reinterpret_cast<const uint32_t *>(code.data())};
+        .pCode    = reinterpret_cast<uint32_t const *>(code.data())};
 
     vk::ShaderModule shader_module;
     vk::Result result =

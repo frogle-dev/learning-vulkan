@@ -22,15 +22,16 @@ inline std::filesystem::path appPath()
     return std::filesystem::canonical("/proc/self/exe").parent_path().parent_path();
 }
 
-constexpr uint8_t max_frames_in_flight = 2;
+uint8_t constexpr max_frames_in_flight = 2;
+uint32_t constexpr api_version         = vk::ApiVersion14;
 
 #ifdef NDEBUG
-constexpr bool enable_validation_layers = false;
+bool constexpr enable_validation_layers = false;
 #else
-constexpr bool enable_validation_layers = true;
+bool constexpr enable_validation_layers = true;
 #endif
 
-constexpr std::array<char const *, 1> validation_layers = {"VK_LAYER_KHRONOS_validation"};
+std::array<char const *, 1> constexpr validation_layers = {"VK_LAYER_KHRONOS_validation"};
 
 struct Vertex
 {
@@ -64,14 +65,14 @@ struct Vertex
     }
 };
 
-const std::vector<Vertex> vertices = {
+auto constexpr vertices = std::to_array<Vertex>({
     {{-0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
     {{0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
     {{0.5f, 0.5f}, {0.0f, 0.5f, 0.0f}, {0.0f, 1.0f}},
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-};
+});
 
-const std::vector<uint16_t> indices = {0, 1, 2, 2, 3, 0};
+auto constexpr indices = std::to_array<uint16_t>({0, 1, 2, 2, 3, 0});
 
 struct UniformBufferObject
 {
@@ -80,13 +81,20 @@ struct UniformBufferObject
     alignas(16) glm::mat4 proj;
 };
 
+struct Texture
+{
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VkImage image            = VK_NULL_HANDLE;
+    VkImageView view         = VK_NULL_HANDLE;
+    VkSampler sampler        = VK_NULL_HANDLE;
+};
+
 enum class AppErrorKind
 {
     VulkanFailure,
     SDLFailure,
     ValidationLayerNotSupported,
     ExtensionNotSupported,
-    SurfaceCreationFailed,
     FailedToFindGPU,
     NoSuitableQueueFamily,
     FailedToOpenFile,
@@ -102,7 +110,7 @@ template <typename T> using AppResult = std::expected<T, AppError>;
 class App
 {
   public:
-    [[nodiscard]] static AppResult<App> init(Window &window);
+    [[nodiscard]] static AppResult<App> init(Window &window, std::string const &app_name);
     [[nodiscard]] AppResult<void> deinit();
 
     bool isRunning();
@@ -112,13 +120,15 @@ class App
   private:
     App() = default;
 
+    std::string app_name_;
+
     DeletionQueue deletion_queue_;
 
     Window *window_ = nullptr;
 
     bool running_ = false;
 
-    std::array<const char *, 1> required_device_extensions_ = {
+    std::array<char const *, 1> required_device_extensions_ = {
         vk::KHRSwapchainExtensionName};
 
     vk::Instance instance_              = VK_NULL_HANDLE;
@@ -147,20 +157,25 @@ class App
     vk::Pipeline graphics_pipeline_                = VK_NULL_HANDLE;
 
     vk::CommandPool command_pool_ = VK_NULL_HANDLE;
-    std::vector<vk::CommandBuffer> command_buffers_;
+    std::array<vk::CommandBuffer, max_frames_in_flight> command_buffers_;
 
     uint32_t frame_idx_ = 0;
 
     /* BUFFERS */
 
-    vk::Buffer vertex_buffer_              = VK_NULL_HANDLE;
-    vk::DeviceMemory vertex_buffer_memory_ = VK_NULL_HANDLE;
-    vk::Buffer index_buffer_               = VK_NULL_HANDLE;
-    vk::DeviceMemory index_buffer_memory_  = VK_NULL_HANDLE;
+    // vk::Buffer vertex_buffer_              = VK_NULL_HANDLE;
+    // vk::DeviceMemory vertex_buffer_memory_ = VK_NULL_HANDLE;
+    // vk::Buffer index_buffer_               = VK_NULL_HANDLE;
+    // vk::DeviceMemory index_buffer_memory_  = VK_NULL_HANDLE;
+    //
+    // std::vector<vk::Buffer> uniform_buffers_;
+    // std::vector<vk::DeviceMemory> uniform_buffers_memory_;
+    // std::vector<void *> uniform_buffers_mapped_;
 
-    std::vector<vk::Buffer> uniform_buffers_;
-    std::vector<vk::DeviceMemory> uniform_buffers_memory_;
-    std::vector<void *> uniform_buffers_mapped_;
+    VmaAllocation vertex_buffer_allocation_ = VK_NULL_HANDLE;
+    VkBuffer vertex_buffer_                 = VK_NULL_HANDLE;
+    VmaAllocation index_buffer_allocation_  = VK_NULL_HANDLE;
+    VkBuffer index_buffer_                  = VK_NULL_HANDLE;
 
     vk::DescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     std::vector<vk::DescriptorSet> descriptor_sets_;
@@ -174,49 +189,38 @@ class App
 
     /* SYNC OBJECTS */
 
-    std::vector<vk::Semaphore> present_complete_sphrs_;
-    std::vector<vk::Semaphore> render_finished_sphrs_;
+    std::vector<vk::Semaphore> image_acquire_sphrs_;
+    std::vector<vk::Semaphore> render_complete_sphrs_;
     std::vector<vk::Fence> draw_fences_;
 
     /* APPLICATION METHODS */
 
-    [[nodiscard]]
-    AppResult<void> initVulkan();
-
-    [[nodiscard]]
-    AppResult<void> drawFrame();
-
+    [[nodiscard]] AppResult<void> initVulkan();
+    [[nodiscard]] AppResult<void> drawFrame();
     void updateUniformBuffer(uint32_t current_image);
 
     /* SETUP METHODS */
 
-    [[nodiscard]]
-    static AppResult<std::vector<char>> readFile(const std::string &path);
+    [[nodiscard]] static AppResult<std::vector<char>> readFile(std::string const &path);
 
     /// VKAPI_ATTR, VKAPI_CALL gives the function a signature that vulkan can
     /// call
     static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
         vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
         vk::DebugUtilsMessageTypeFlagsEXT type,
-        const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData);
+        vk::DebugUtilsMessengerCallbackDataEXT const *pCallbackData, void *pUserData);
 
-    [[nodiscard]]
-    AppResult<void> setupDebugMessenger();
+    [[nodiscard]] AppResult<void> setupDebugMessenger();
 
-    std::vector<const char *> getRequiredInstanceExtensions();
+    std::vector<char const *> getRequiredInstanceExtensions();
+    [[nodiscard]] AppResult<void> createInstance();
+    [[nodiscard]] AppResult<void> createWindowSurface();
 
-    [[nodiscard]]
-    AppResult<void> createInstance();
+    [[nodiscard]] AppResult<bool> isDeviceSuitable(
+        vk::PhysicalDevice const &physical_device);
 
-    [[nodiscard]]
-    AppResult<void> createWindowSurface();
-
-    [[nodiscard]]
-    AppResult<bool> isDeviceSuitable(vk::PhysicalDevice const &physical_device);
-    [[nodiscard]]
-    AppResult<void> pickPhysicalDevice();
-    [[nodiscard]]
-    AppResult<void> createLogicalDevice();
+    [[nodiscard]] AppResult<void> pickPhysicalDevice();
+    [[nodiscard]] AppResult<void> createLogicalDevice();
 
     vk::SurfaceFormatKHR chooseSwapchainSurfaceFormat(
         std::vector<vk::SurfaceFormatKHR> const &available_formats);
@@ -224,46 +228,34 @@ class App
     vk::PresentModeKHR chooseSwapchainPresentMode(
         std::vector<vk::PresentModeKHR> const &available_present_modes);
 
-    [[nodiscard]]
-    AppResult<vk::Extent2D> chooseSwapchainExtent(
+    [[nodiscard]] AppResult<vk::Extent2D> chooseSwapchainExtent(
         vk::SurfaceCapabilitiesKHR const &surface_capabilities);
 
-    [[nodiscard]]
-    AppResult<void> recreateSwapchain();
+    [[nodiscard]] AppResult<void> recreateSwapchain();
 
     /// if recreate is on, the swapchain cleanup will have to be handled manually
     /// only turn on recreate when the swapchain must be recreated and the old swapchain
     /// deletion queue has to be flushed before a new swapchain is appended
-    [[nodiscard]]
-    AppResult<void> createSwapchain(bool recreate);
+    [[nodiscard]] AppResult<void> createSwapchain(bool recreate);
 
-    [[nodiscard]]
-    AppResult<vk::ImageView> createImageView(vk::Image const &image, vk::Format format,
-                                             bool for_swapchain);
+    [[nodiscard]] AppResult<vk::ImageView> createImageView(
+        vk::Image const &image, vk::Format format, bool for_swapchain);
 
-    [[nodiscard]]
-    AppResult<void> createImageViews();
-
-    [[nodiscard]]
-    AppResult<void> createDescriptorSetLayout();
-
-    [[nodiscard]]
-    AppResult<void> createGraphicsPipeline();
+    [[nodiscard]] AppResult<void> createImageViews();
+    [[nodiscard]] AppResult<void> createDescriptorSetLayout();
+    [[nodiscard]] AppResult<void> createGraphicsPipeline();
 
     [[nodiscard]] AppResult<vk::ShaderModule> createShaderModule(
-        const std::vector<char> &code);
+        std::vector<char> const &code);
 
-    [[nodiscard]]
-    AppResult<void> createCommandPool();
+    [[nodiscard]] AppResult<void> createCommandPool();
 
-    [[nodiscard]]
-    AppResult<void> createImage(uint32_t width, uint32_t height, vk::Format format,
-                                vk::ImageTiling tiling, vk::ImageUsageFlags usage,
-                                vk::MemoryPropertyFlags properties, vk::Image &image,
-                                vk::DeviceMemory &image_memory);
+    [[nodiscard]] AppResult<void> createImage(
+        uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling,
+        vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::Image &image,
+        vk::DeviceMemory &image_memory);
 
-    [[nodiscard]]
-    AppResult<void> transitionImageLayout(
+    [[nodiscard]] AppResult<void> transitionImageLayout(
         vk::Image const &image, vk::ImageLayout old_layout, vk::ImageLayout new_layout);
 
     void transitionImageLayout(
@@ -271,59 +263,38 @@ class App
         vk::AccessFlags2 old_access_mask, vk::AccessFlags2 new_access_mask,
         vk::PipelineStageFlags2 old_stage_mask, vk::PipelineStageFlags2 new_stage_mask);
 
-    [[nodiscard]]
-    AppResult<void> createTextureImage();
+    [[nodiscard]] AppResult<void> createTextureImage();
+    [[nodiscard]] AppResult<void> createTextureImageView();
+    [[nodiscard]] AppResult<void> createTextureSampler();
 
-    [[nodiscard]]
-    AppResult<void> createTextureImageView();
+    [[nodiscard]] AppResult<void> copyBufferToImage(
+        vk::Buffer const &buffer, vk::Image &image, uint32_t width, uint32_t height);
 
-    [[nodiscard]]
-    AppResult<void> createTextureSampler();
+    [[nodiscard]] AppResult<uint32_t> findMemoryType(uint32_t typeFilter,
+                                                     vk::MemoryPropertyFlags properties);
 
-    [[nodiscard]]
-    AppResult<void> copyBufferToImage(vk::Buffer const &buffer, vk::Image &image,
-                                      uint32_t width, uint32_t height);
+    [[nodiscard]] AppResult<void> createBuffer(
+        vk::DeviceSize size, vk::BufferUsageFlags usage,
+        vk::MemoryPropertyFlags properties, vk::Buffer &buffer,
+        vk::DeviceMemory &buffer_memory);
 
-    [[nodiscard]]
-    AppResult<uint32_t> findMemoryType(uint32_t typeFilter,
-                                       vk::MemoryPropertyFlags properties);
+    [[nodiscard]] AppResult<vk::CommandBuffer> beginOneTimeCommandBuffer();
 
-    [[nodiscard]]
-    AppResult<void> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
-                                 vk::MemoryPropertyFlags properties, vk::Buffer &buffer,
-                                 vk::DeviceMemory &buffer_memory);
+    [[nodiscard]] AppResult<void> endOneTimeCommandBuffer(
+        vk::CommandBuffer &command_buffer);
 
-    [[nodiscard]]
-    AppResult<vk::CommandBuffer> beginOneTimeCommandBuffer();
+    [[nodiscard]] AppResult<void> copyBuffer(vk::Buffer &src_buffer,
+                                             vk::Buffer &dst_buffer, vk::DeviceSize size);
 
-    [[nodiscard]]
-    AppResult<void> endOneTimeCommandBuffer(vk::CommandBuffer &command_buffer);
+    [[nodiscard]] AppResult<void> createVertexBuffer();
+    [[nodiscard]] AppResult<void> createIndexBuffer();
+    [[nodiscard]] AppResult<void> createUniformBuffers();
 
-    [[nodiscard]]
-    AppResult<void> copyBuffer(vk::Buffer &src_buffer, vk::Buffer &dst_buffer,
-                               vk::DeviceSize size);
+    [[nodiscard]] AppResult<void> createDescriptorPool();
+    [[nodiscard]] AppResult<void> createDescriptorSets();
 
-    [[nodiscard]]
-    AppResult<void> createVertexBuffer();
+    [[nodiscard]] AppResult<void> createCommandBuffers();
+    [[nodiscard]] AppResult<void> recordCommandBuffer(uint32_t image_idx);
 
-    [[nodiscard]]
-    AppResult<void> createIndexBuffer();
-
-    [[nodiscard]]
-    AppResult<void> createUniformBuffers();
-
-    [[nodiscard]]
-    AppResult<void> createDescriptorPool();
-
-    [[nodiscard]]
-    AppResult<void> createDescriptorSets();
-
-    [[nodiscard]]
-    AppResult<void> createCommandBuffers();
-
-    [[nodiscard]]
-    AppResult<void> recordCommandBuffer(uint32_t image_idx);
-
-    [[nodiscard]]
-    AppResult<void> createSyncObjects();
+    [[nodiscard]] AppResult<void> createSyncObjects();
 };
