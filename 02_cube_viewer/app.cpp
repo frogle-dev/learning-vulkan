@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <fstream>
-#include <vulkan/vulkan.hpp>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
@@ -107,6 +106,10 @@ AppResult<void> App::initVulkan()
     deletion_queue_.setDevice(logical_device_);
     swapchain_deletion_queue_.setDevice(logical_device_);
 
+    expected = initVMA();
+    if (!expected)
+        return AppError::unexpected(expected.error());
+
     expected = createSwapchain(false);
     if (!expected)
         return AppError::unexpected(expected.error());
@@ -115,7 +118,15 @@ AppResult<void> App::initVulkan()
     if (!expected)
         return AppError::unexpected(expected.error());
 
+    expected = createDepthImage();
+    if (!expected)
+        return AppError::unexpected(expected.error());
+
     expected = createDescriptorSetLayout();
+    if (!expected)
+        return AppError::unexpected(expected.error());
+
+    expected = createShaders();
     if (!expected)
         return AppError::unexpected(expected.error());
 
@@ -555,13 +566,7 @@ AppResult<bool> App::isDeviceSuitable(vk::PhysicalDevice const &physical_device)
         features.template get<vk::PhysicalDeviceFeatures>().samplerAnisotropy &&
         features.template get<vk::PhysicalDeviceVulkan11Features>()
             .shaderDrawParameters &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>().descriptorIndexing &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .shaderSampledImageArrayNonUniformIndexing &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .descriptorBindingVariableDescriptorCount &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .runtimeDescriptorArray &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore &&
         features.template get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress &&
         features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
         features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
@@ -655,6 +660,9 @@ AppResult<void> App::createLogicalDevice()
         vk::PhysicalDeviceVulkan11Features{
             .shaderDrawParameters = vk::True,
         },
+        vk::PhysicalDeviceVulkan12Features{
+            .timelineSemaphore = vk::True,
+        },
         vk::PhysicalDeviceVulkan13Features{
             .synchronization2 = vk::True,
             .dynamicRendering = vk::True,
@@ -664,7 +672,7 @@ AppResult<void> App::createLogicalDevice()
         },
     };
 
-    float queue_priority = 0.5f; // priority for scheduling of command buffer
+    float queue_priority = 1.0f; // priority for scheduling of command buffer
                                  // execution, needed even if there is one queue
     vk::DeviceQueueCreateInfo device_queue_create_info{
         .queueFamilyIndex = queue_family_idx_,
@@ -692,6 +700,34 @@ AppResult<void> App::createLogicalDevice()
     queue_ = logical_device_.getQueue(queue_family_idx_, 0);
 
     deletion_queue_.pushBack([](vk::Device device) { device.destroy(); });
+
+    return {};
+}
+
+AppResult<void> App::initVMA()
+{
+    VmaVulkanFunctions vma_func_info{};
+    VmaAllocatorCreateInfo vma_alloc_info{
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice   = physical_device_,
+        .device           = logical_device_,
+        .pVulkanFunctions = &vma_func_info,
+        .instance         = instance_,
+        .vulkanApiVersion = api_version,
+    };
+
+    VkResult result = vmaImportVulkanFunctionsFromVolk(&vma_alloc_info, &vma_func_info);
+    if (result != VK_SUCCESS)
+        return AppError::unexpected(
+            {"Failed to import vma vulkan vunctions from volk", vk::Result(result)});
+
+    result = vmaCreateAllocator(&vma_alloc_info, &vma_allocator_);
+    if (result != VK_SUCCESS)
+        return AppError::unexpected(
+            {"Failed to create vma allocator", vk::Result(result)});
+
+    deletion_queue_.pushBack([vma_allocator = vma_allocator_](vk::Device device)
+                             { vmaDestroyAllocator(vma_allocator); });
 
     return {};
 }
@@ -835,7 +871,7 @@ AppResult<void> App::recreateSwapchain()
 [[nodiscard]]
 AppResult<void> App::createSwapchain(bool recreate)
 {
-    vk::SurfaceCapabilitiesKHR surface_capabilities;
+    vk::SurfaceCapabilitiesKHR surface_capabilities{};
     vk::Result result = physical_device_.getSurfaceCapabilitiesKHR(window_surface_,
                                                                    &surface_capabilities);
     if (result != vk::Result::eSuccess)
@@ -946,12 +982,67 @@ AppResult<void> App::createImageViews()
             createImageView(swapchain_images_[i], swapchain_surface_format_.format, true);
 
         if (!image_view)
-        {
             return AppError::unexpected(image_view.error());
-        }
 
         swapchain_image_views_[i] = image_view.value();
     }
+
+    return {};
+}
+
+[[nodiscard]]
+AppResult<void> App::createDepthImage()
+{
+    vk::ImageCreateInfo depth_img_info{
+        .imageType     = vk::ImageType::e2D,
+        .format        = depth_format_,
+        .extent        = {.width  = swapchain_extent_.width,
+                          .height = swapchain_extent_.height,
+                          .depth  = 1},
+        .mipLevels     = 1,
+        .arrayLayers   = 1,
+        .samples       = vk::SampleCountFlagBits::e1,
+        .tiling        = vk::ImageTiling::eOptimal,
+        .usage         = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+        .initialLayout = vk::ImageLayout::eUndefined,
+    };
+    VkImageCreateInfo c_api_depth_img_info =
+        static_cast<VkImageCreateInfo>(depth_img_info);
+
+    VmaAllocationCreateInfo alloc_info{
+        .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+    };
+
+    VkResult c_result = vmaCreateImage(vma_allocator_, &c_api_depth_img_info, &alloc_info,
+                                       &depth_image_, &depth_image_allocation_, nullptr);
+
+    if (c_result != VK_SUCCESS)
+        return AppError::unexpected(
+            {"Failed to vma create image, depth image", vk::Result(c_result)});
+
+    vk::ImageViewCreateInfo depth_img_view_info{
+        .image    = depth_image_,
+        .viewType = vk::ImageViewType::e2D,
+        .format   = depth_format_,
+        .subresourceRange{.aspectMask = vk::ImageAspectFlagBits::eDepth,
+                          .levelCount = 1,
+                          .layerCount = 1},
+    };
+
+    vk::Result result = logical_device_.createImageView(&depth_img_view_info, nullptr,
+                                                        &depth_image_view_);
+    if (result != vk::Result::eSuccess)
+        return AppError::unexpected({"Failed to create depth image view", result});
+
+    swapchain_deletion_queue_.pushBack(
+        [vma_allocator = vma_allocator_, depth_image = depth_image_,
+         depth_image_allocation = depth_image_allocation_,
+         depth_image_view       = depth_image_view_](vk::Device device)
+        {
+            device.destroyImageView(depth_image_view);
+            vmaDestroyImage(vma_allocator, depth_image, depth_image_allocation);
+        });
 
     return {};
 }
@@ -984,6 +1075,34 @@ AppResult<void> App::createDescriptorSetLayout()
         { device.destroyDescriptorSetLayout(descriptor_set_layout); });
 
     return {};
+}
+
+[[nodiscard]]
+AppResult<vk::ShaderModule> App::createShaderModule(std::vector<char> const &code,
+                                                    shaderc_shader_kind kind)
+{
+    spdlog::debug("Compiling shader");
+
+    vk::ShaderModuleCreateInfo create_info{
+        .codeSize = code.size() * sizeof(char),
+        .pCode    = reinterpret_cast<uint32_t const *>(code.data())};
+
+    vk::ShaderModule shader_module;
+    vk::Result result =
+        logical_device_.createShaderModule(&create_info, nullptr, &shader_module);
+
+    if (result != vk::Result::eSuccess)
+        return AppError::unexpected({"Failed to create shader module", result});
+
+    deletion_queue_.pushBack([shader_module](vk::Device device)
+                             { device.destroyShaderModule(shader_module); });
+
+    return shader_module;
+}
+
+[[nodiscard]]
+AppResult<void> App::createShaders()
+{
 }
 
 [[nodiscard]]
@@ -1126,26 +1245,6 @@ AppResult<void> App::createGraphicsPipeline()
         });
 
     return {};
-}
-
-[[nodiscard]]
-AppResult<vk::ShaderModule> App::createShaderModule(std::vector<char> const &code)
-{
-    vk::ShaderModuleCreateInfo create_info{
-        .codeSize = code.size() * sizeof(char),
-        .pCode    = reinterpret_cast<uint32_t const *>(code.data())};
-
-    vk::ShaderModule shader_module;
-    vk::Result result =
-        logical_device_.createShaderModule(&create_info, nullptr, &shader_module);
-
-    if (result != vk::Result::eSuccess)
-        return AppError::unexpected({"Failed to create shader module", result});
-
-    deletion_queue_.pushBack([shader_module](vk::Device device)
-                             { device.destroyShaderModule(shader_module); });
-
-    return shader_module;
 }
 
 [[nodiscard]]

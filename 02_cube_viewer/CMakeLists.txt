@@ -30,6 +30,13 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(VMA)
 
 FetchContent_Declare(
+    fetch_vk_bootstrap
+    GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
+    GIT_TAG v1.4.350
+)
+FetchContent_MakeAvailable(fetch_vk_bootstrap)
+
+FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
     GIT_TAG v1.17.0
@@ -73,6 +80,7 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE pch.hpp)
 
 target_link_libraries(${PROJECT_NAME}
     volk::volk
+    vk-bootstrap::vk-bootstrap
     Vulkan::Headers
     SDL3::SDL3
     glm::glm

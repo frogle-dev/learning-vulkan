@@ -6,9 +6,12 @@
 #define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#include <VkBootstrap.h>
 #include <vulkan/vulkan.hpp>
 
 #include <vk_mem_alloc.h>
+
+#include <shaderc/shaderc.hpp>
 
 #include <SDL3/SDL_vulkan.h>
 
@@ -152,30 +155,26 @@ class App
     std::vector<vk::ImageView> swapchain_image_views_;
     DeletionQueue swapchain_deletion_queue_;
 
-    vk::DescriptorSetLayout descriptor_set_layout_ = VK_NULL_HANDLE;
-    vk::PipelineLayout pipeline_layout_            = VK_NULL_HANDLE;
-    vk::Pipeline graphics_pipeline_                = VK_NULL_HANDLE;
-
     vk::CommandPool command_pool_ = VK_NULL_HANDLE;
     std::array<vk::CommandBuffer, max_frames_in_flight> command_buffers_;
 
     uint32_t frame_idx_ = 0;
 
-    /* BUFFERS */
+    VmaAllocator vma_allocator_ = VK_NULL_HANDLE;
 
-    // vk::Buffer vertex_buffer_              = VK_NULL_HANDLE;
-    // vk::DeviceMemory vertex_buffer_memory_ = VK_NULL_HANDLE;
-    // vk::Buffer index_buffer_               = VK_NULL_HANDLE;
-    // vk::DeviceMemory index_buffer_memory_  = VK_NULL_HANDLE;
-    //
-    // std::vector<vk::Buffer> uniform_buffers_;
-    // std::vector<vk::DeviceMemory> uniform_buffers_memory_;
-    // std::vector<void *> uniform_buffers_mapped_;
+    static vk::Format constexpr depth_format_ = vk::Format::eD32Sfloat;
+    VkImage depth_image_                      = VK_NULL_HANDLE;
+    vk::ImageView depth_image_view_           = VK_NULL_HANDLE;
+    VmaAllocation depth_image_allocation_     = VK_NULL_HANDLE;
 
     VmaAllocation vertex_buffer_allocation_ = VK_NULL_HANDLE;
     VkBuffer vertex_buffer_                 = VK_NULL_HANDLE;
     VmaAllocation index_buffer_allocation_  = VK_NULL_HANDLE;
     VkBuffer index_buffer_                  = VK_NULL_HANDLE;
+
+    vk::DescriptorSetLayout descriptor_set_layout_ = VK_NULL_HANDLE;
+    vk::PipelineLayout pipeline_layout_            = VK_NULL_HANDLE;
+    vk::Pipeline graphics_pipeline_                = VK_NULL_HANDLE;
 
     vk::DescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     std::vector<vk::DescriptorSet> descriptor_sets_;
@@ -222,6 +221,8 @@ class App
     [[nodiscard]] AppResult<void> pickPhysicalDevice();
     [[nodiscard]] AppResult<void> createLogicalDevice();
 
+    [[nodiscard]] AppResult<void> initVMA();
+
     vk::SurfaceFormatKHR chooseSwapchainSurfaceFormat(
         std::vector<vk::SurfaceFormatKHR> const &available_formats);
 
@@ -242,11 +243,15 @@ class App
         vk::Image const &image, vk::Format format, bool for_swapchain);
 
     [[nodiscard]] AppResult<void> createImageViews();
+
+    [[nodiscard]] AppResult<void> createDepthImage();
+
     [[nodiscard]] AppResult<void> createDescriptorSetLayout();
-    [[nodiscard]] AppResult<void> createGraphicsPipeline();
 
     [[nodiscard]] AppResult<vk::ShaderModule> createShaderModule(
-        std::vector<char> const &code);
+        std::vector<char> const &code, shaderc_shader_kind kind);
+    [[nodiscard]] AppResult<void> createShaders();
+    [[nodiscard]] AppResult<void> createGraphicsPipeline();
 
     [[nodiscard]] AppResult<void> createCommandPool();
 
